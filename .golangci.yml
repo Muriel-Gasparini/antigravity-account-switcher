@@ -1,0 +1,53 @@
+# Production-ready golangci-lint configuration for antigravity-account-switcher
+# Compatible with golangci-lint v1.64.6 and Go 1.24
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+linters-settings:
+  errcheck:
+    # Do not check blank identifier assignments (_ = ...) as discarding errors
+    # is standard idiomatic Go for operations where errors are non-actionable.
+    check-blank: false
+
+    # Do not check type assertions by default (avoid flagging test mocks and unexported asserts).
+    check-type-assertions: false
+
+    # Exclude standard transaction rollback calls where error checking is redundant
+    # (e.g. defer tx.Rollback() returning sql.ErrTxDone after successful commit).
+    exclude-functions:
+      - (*database/sql.Tx).Rollback
+      - (database/sql.Tx).Rollback
+
+  govet:
+    enable-all: false
+    disable:
+      - fieldalignment
+      - shadow
+
+issues:
+  # Use default exclusions for common false positives (e.g. EXC0001: Close, Flush, etc.)
+  exclude-use-default: true
+
+  # Show all issues without arbitrary cutoffs
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  # Post-filtering exclusion rules as defense-in-depth
+  exclude-rules:
+    # Redundant rollback exclusion regex across any receiver variable naming
+    - text: "Error return value of `.*Rollback` is not checked"
+      linters:
+        - errcheck

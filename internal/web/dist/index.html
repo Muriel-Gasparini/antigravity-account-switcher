@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Antigravity Account Switcher</title>
+  <link rel="stylesheet" href="/dist/style.css">
+</head>
+<body>
+  <!-- Precision Header -->
+  <header class="app-header">
+    <div class="app-container header-inner">
+      <div class="brand-group">
+        <div class="brand-glyph" aria-hidden="true">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+          </svg>
+        </div>
+        <div class="brand-titles">
+          <div class="brand-name-row">
+            <span class="brand-name">Antigravity Switcher</span>
+            <span id="switcher-version" class="brand-version">v0.1.0-dev</span>
+          </div>
+          <p class="brand-subtitle">Zero-latency failover proxy & quota supervisor for Google Antigravity 2.0</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <!-- Live SSE Stream Status Badge -->
+        <div id="connection-badge" class="badge badge-success" role="status" aria-live="polite" title="Live SSE telemetry stream active">
+          <span class="status-dot status-dot-success" id="connection-dot"></span>
+          <span id="connection-status-text">Connected</span>
+        </div>
+
+        <!-- Sync / Refresh Quotas Button -->
+        <button id="btn-refresh" class="btn btn-secondary btn-icon" title="Synchronize Quotas Now (Press R)" aria-label="Synchronize Quotas Now">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" id="refresh-icon">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          <span class="btn-text-desktop">Sync</span>
+        </button>
+
+        <!-- 1-Click Google OAuth Button -->
+        <button id="btn-add-account" class="btn btn-primary" title="Authenticate New Google Account">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12.545,10.239v3.821h5.445c-0.712,2.315-2.647,3.972-5.445,3.972c-3.332,0-6.033-2.701-6.033-6.032s2.701-6.032,6.033-6.032c1.498,0,2.866,0.549,3.921,1.453l2.814-2.814C17.503,2.988,15.139,2,12.545,2C7.021,2,2.543,6.477,2.543,12s4.478,10,10.002,10c8.396,0,10.249-7.85,9.426-11.748L12.545,10.239z"/>
+          </svg>
+          Add Account
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Layout -->
+  <main class="main-content app-container">
+    <!-- Section 1: Telemetry Command Bar (Integrated Active Account + Quick Stats) -->
+    <section class="telemetry-bar" aria-label="System Overview">
+      <!-- Active Account Route Block -->
+      <div class="route-block">
+        <div class="route-header">
+          <span class="section-label">Active Routing Route</span>
+          <span id="active-status-badge" class="badge badge-success">ACTIVE</span>
+        </div>
+        <div class="route-email-row">
+          <span id="active-email" class="route-email" title="Resolving active account...">Resolving active account...</span>
+          <button id="btn-copy-active-email" class="btn-copy-mini" title="Copy active email" aria-label="Copy active email address">
+            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+          </button>
+        </div>
+        <div class="route-meta">
+          <span id="active-details" class="mono">Proxy port: local • HTTP 429 auto-failover armed</span>
+        </div>
+      </div>
+
+      <!-- Live Metric Gauges (Integrated in-line) -->
+      <div class="hero-stats">
+        <div class="hero-stat-item">
+          <div class="stat-label">Tokens (Today)</div>
+          <div id="tokens-today" class="stat-value tabular-nums">0</div>
+          <div id="requests-today" class="stat-subtext">0 requests processed</div>
+        </div>
+
+        <div class="hero-stat-item">
+          <div class="stat-label">Tokens (All-Time)</div>
+          <div id="tokens-alltime" class="stat-value tabular-nums">0</div>
+          <div id="requests-alltime" class="stat-subtext">0 requests total</div>
+        </div>
+
+        <div class="hero-stat-item">
+          <div class="stat-label">Account Pool</div>
+          <div id="accounts-stat-count" class="stat-value tabular-nums">0</div>
+          <div id="accounts-stat-subtext" class="stat-subtext">Standby targets</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 2: Account Pool & Live Quota Matrix -->
+    <section class="panel" aria-labelledby="accounts-section-title">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2 id="accounts-section-title" class="panel-title">
+            Account Pool & Quotas
+            <span id="accounts-count-badge" class="badge badge-neutral">0 accounts</span>
+          </h2>
+          <p class="panel-description">Live quota fractions polled every 60s from Google Cloud Code PA. Instant failover on HTTP 429.</p>
+        </div>
+        <div class="text-xs text-muted" id="last-poll-time">
+          Auto-polling every 60s
+        </div>
+      </div>
+
+      <!-- Dynamic Accounts Grid -->
+      <div id="accounts-grid" class="accounts-grid">
+        <!-- Account cards rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- Section 3: Token Consumption & 14-Day Timeline Visualizer -->
+    <section class="panel" aria-labelledby="metrics-section-title">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2 id="metrics-section-title" class="panel-title">Token Consumption & Analytics</h2>
+          <p class="panel-description">Captured in real-time from streamGenerateContent usageMetadata</p>
+        </div>
+        <!-- Period Selector Tabs -->
+        <div class="metrics-tabs" role="tablist" aria-label="Aggregation Period" id="period-selector">
+          <button data-period="day" class="tab-btn" role="tab" aria-selected="false">24 Hours</button>
+          <button data-period="week" class="tab-btn" role="tab" aria-selected="false">7 Days</button>
+          <button data-period="month" class="tab-btn" role="tab" aria-selected="false">30 Days</button>
+          <button data-period="lifetime" class="tab-btn active" role="tab" aria-selected="true">All Time</button>
+        </div>
+      </div>
+
+      <!-- Aggregated Metric Breakdown Tiles -->
+      <div class="metrics-summary-grid">
+        <div class="metric-tile">
+          <div class="metric-tile-label">Prompt Tokens (Input)</div>
+          <div id="metric-prompt" class="metric-tile-value tabular-nums">0</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-label">Candidates Tokens (Output)</div>
+          <div id="metric-candidates" class="metric-tile-value tabular-nums">0</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-label">Cached Context Tokens</div>
+          <div id="metric-cached" class="metric-tile-value tabular-nums">0</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-tile-label">Total Requests</div>
+          <div id="metric-requests" class="metric-tile-value tabular-nums">0</div>
+        </div>
+      </div>
+
+      <!-- 14-Day Timeline Bar Chart Card -->
+      <div class="chart-card" id="timeline-chart-card">
+        <!-- Active Inspection Header (Data always readable, no clipping) -->
+        <div class="chart-inspector" id="chart-inspector" aria-live="polite">
+          <div class="inspector-date-label">
+            <span class="status-dot status-dot-success"></span>
+            <span id="inspector-date">14-Day Daily Usage Trend</span>
+          </div>
+          <div class="inspector-data-row" id="inspector-data">
+            <span class="text-xs text-muted">Hover or use arrow keys to inspect daily breakdown</span>
+          </div>
+        </div>
+
+        <!-- Chart Viewport with Y-Axis and Bars -->
+        <div class="chart-viewport" id="chart-viewport">
+          <!-- Horizontal Benchmark Grid Lines -->
+          <div class="chart-grid-lines">
+            <div class="grid-line"><span class="grid-label" id="grid-max-label">--</span></div>
+            <div class="grid-line"><span class="grid-label" id="grid-mid-label">--</span></div>
+            <div class="grid-line"><span class="grid-label">0</span></div>
+          </div>
+
+          <!-- Bars Track -->
+          <div class="bars-track" id="bars-track">
+            <!-- Dynamic columns rendered here -->
+          </div>
+
+          <!-- Card-Anchored Floating Tooltip (Guaranteed Zero Clipping with Boundary Clamping) -->
+          <div class="chart-floating-tooltip" id="chart-tooltip" role="tooltip" aria-hidden="true">
+            <div class="tooltip-title" id="tooltip-date">2026-09-02</div>
+            <div class="tooltip-row">
+              <span class="text-muted">Total:</span>
+              <span class="tooltip-val tabular-nums" id="tooltip-total">0</span>
+            </div>
+            <div class="tooltip-row">
+              <span class="text-muted">Prompt:</span>
+              <span class="tooltip-val text-accent tabular-nums" id="tooltip-prompt">0</span>
+            </div>
+            <div class="tooltip-row">
+              <span class="text-muted">Candidates:</span>
+              <span class="tooltip-val text-success tabular-nums" id="tooltip-candidates">0</span>
+            </div>
+            <div class="tooltip-row">
+              <span class="text-muted">Requests:</span>
+              <span class="tooltip-val tabular-nums" id="tooltip-reqs">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- X-Axis Dates -->
+        <div class="chart-x-axis" id="chart-x-axis">
+          <!-- Dynamic date labels -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 4: Real-Time Proxy Event Log -->
+    <section class="panel" aria-labelledby="logs-section-title">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2 id="logs-section-title" class="panel-title">
+            Live Proxy Event Stream
+            <span class="badge badge-info mono">/api/events</span>
+          </h2>
+          <p class="panel-description">Streaming events via SSE: failovers, token telemetry, quota updates, switch actions</p>
+        </div>
+        <div class="header-actions">
+          <!-- Filter Buttons -->
+          <div class="filter-group" role="group" aria-label="Event Log Filters">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="failover">Failover (429)</button>
+            <button class="filter-btn" data-filter="quota">Quotas</button>
+            <button class="filter-btn" data-filter="tokens">Tokens</button>
+            <button class="filter-btn" data-filter="error">Errors</button>
+          </div>
+          <button id="btn-copy-logs" class="btn btn-subtle" title="Copy Logs to Clipboard">Copy</button>
+          <button id="btn-clear-logs" class="btn btn-subtle" title="Clear Visible Logs">Clear</button>
+        </div>
+      </div>
+
+      <!-- Terminal Console Box -->
+      <div id="logs-container" class="logs-console" role="log" aria-live="polite" tabindex="0">
+        <div class="log-entry">
+          <span class="log-time">--:--:--</span>
+          <span class="log-pill pill-info">SYSTEM</span>
+          <span class="log-message text-muted">Listening for live proxy telemetry events...</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Global Toast Notifications Container -->
+  <div id="toast-container" class="toast-container" aria-live="assertive"></div>
+
+  <!-- Accessible Semantic Footer -->
+  <footer class="app-footer">
+    <div class="app-container">
+      Antigravity Account Switcher • High-reliability failover proxy for Google Antigravity 2.0 • Zero telemetry loss
+    </div>
+  </footer>
+
+  <script src="/dist/app.js"></script>
+</body>
+</html>

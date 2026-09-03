@@ -1,0 +1,45 @@
+# Binaries and build outputs
+bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts and coverage profiles
+*.test
+*.out
+coverage.txt
+coverage.html
+coverage.out
+
+# SQLite runtime databases, WAL logs, and shared memory files
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+data/
+
+# Runtime application logs
+*.log
+logs/
+
+# Operating system and editor artifacts
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+*.bak
+
+# Temporary directories
+tmp/
+.tmp/
+
+# Agent orchestration metadata (internal multi-agent coordination)
+# Keeps the git commit history clean and focused on production code
+.agents/
+ORIGINAL_REQUEST.md
