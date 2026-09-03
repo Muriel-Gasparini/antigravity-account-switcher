@@ -1,5 +1,7 @@
 # Contributing to Antigravity Account Switcher
 
+[English](CONTRIBUTING.md) | [Português (Brasil)](CONTRIBUTING.pt-BR.md)
+
 Thank you for your interest in contributing to **Antigravity Account Switcher**!
 
 We welcome bug reports, improvements, documentation updates, and feature requests. Please follow these guidelines to ensure a smooth contribution process.
