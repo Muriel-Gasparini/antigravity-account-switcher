@@ -25,7 +25,7 @@ func TestInstallDesktop(t *testing.T) {
 		SwitcherBin:    "/usr/bin/antigravity-account-switcher",
 		AntigravityBin: fakeBin,
 		IconPath:       fakeIcon,
-		Name:           "Antigravity IDE Test",
+		Name:           "Antigravity 2.0 Test",
 		Comment:        "Test Comment",
 	}
 
@@ -43,7 +43,7 @@ func TestInstallDesktop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(string(content), "Name=Antigravity IDE Test") {
+	if !strings.Contains(string(content), "Name=Antigravity 2.0 Test") {
 		t.Errorf("expected Name in content, got:\n%s", string(content))
 	}
 	if !strings.Contains(string(content), "Exec=/usr/bin/antigravity-account-switcher launch %F") {

@@ -419,7 +419,7 @@ func TestChallenger2_OversizedSSEPayloads_NoErrTooLong(t *testing.T) {
 }
 
 // TestChallenger2_RealtimeFlushing_EveryLine verifies that http.Flusher.Flush() is triggered
-// on every non-empty line received, ensuring zero latency for IDE real-time streaming,
+// on every non-empty line received, ensuring zero latency for client real-time streaming,
 // and confirms graceful behavior when ResponseWriter does not implement Flusher.
 func TestChallenger2_RealtimeFlushing_EveryLine(t *testing.T) {
 	broadcaster := proxy.NewBroadcaster(10)

@@ -40,7 +40,7 @@ const (
 // ResolveCredentials dynamically discovers Google OAuth credentials on the local machine:
 // 1. Environment variables: ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET
 // 2. Existing local Antigravity token files: ~/.gemini/antigravity-acp/acp_token.json
-// 3. Installed Antigravity 2.0 and IDE binary inspection (language_server, main.js)
+// 3. Installed Antigravity 2.0 binary inspection (language_server, main.js)
 func ResolveCredentials() (string, string) {
 	// 1. Environment variable override
 	envID := os.Getenv("ANTIGRAVITY_CLIENT_ID")
@@ -60,7 +60,7 @@ func ResolveCredentials() (string, string) {
 		return fileID, fileSec
 	}
 
-	// 3. Installed Antigravity 2.0 & IDE binary bundle inspection
+	// 3. Installed Antigravity 2.0 binary bundle inspection
 	if bundleID, bundleSec := discoverFromIDEBundle(); bundleID != "" && bundleSec != "" {
 		if envID != "" {
 			return envID, bundleSec
@@ -104,7 +104,7 @@ func discoverFromIDEBundle() (string, string) {
 		"/opt/antigravity/resources/bin/language_server",
 		"/opt/Antigravity/resources/bin/language_server",
 		"/opt/antigravity/Antigravity-x64/resources/bin/language_server",
-		// Legacy / Preview IDE main.js paths
+		// Preview bundle main.js paths
 		filepath.Join(home, ".local", "share", "antigravity-ide", "resources", "app", "out", "main.js"),
 		"/opt/Antigravity/resources/app/out/main.js",
 		"/usr/share/antigravity-ide/resources/app/out/main.js",
@@ -842,7 +842,7 @@ var successTemplate = template.Must(template.New("success").Parse(`<!DOCTYPE htm
     </div>
     <h2>Account Connected!</h2>
     <p>Successfully authenticated Google account <br><span class="email">{{.Email}}</span></p>
-    <p>You can close this tab and return to Antigravity IDE or your terminal.</p>
+    <p>You can close this tab and return to Antigravity 2.0 or your terminal.</p>
     <div class="footer">This window will close automatically.</div>
   </div>
   <script>

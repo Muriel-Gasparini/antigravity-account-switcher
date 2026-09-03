@@ -209,7 +209,7 @@ func (p *Poller) loop(ctx context.Context, done chan struct{}) {
 	_ = p.PollOnce(ctx)
 
 	// Early discovery loop: probe every 1.5s during the first 20s to detect
-	// Antigravity language_server as soon as the IDE finishes launching.
+	// Antigravity language_server as soon as Antigravity 2.0 finishes launching.
 	go func() {
 		for i := 0; i < 12; i++ {
 			select {

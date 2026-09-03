@@ -10,7 +10,7 @@ We take the security of Antigravity Account Switcher seriously. If you believe y
 Please include:
 1. Description of the vulnerability and potential impact.
 2. Step-by-step reproduction steps or proof-of-concept.
-3. Relevant environment details (OS, Go version, Antigravity IDE version).
+3. Relevant environment details (OS, Go version, Antigravity 2.0 version).
 
 We will acknowledge your report within 48 hours and work with you to patch and disclose the issue responsibly.
 
@@ -38,4 +38,4 @@ export ANTIGRAVITY_CLIENT_SECRET="your-client-secret"
 ### Local Storage and Privacy
 
 - **Zero Telemetry Leakage:** All access tokens, refresh tokens, and token metrics are stored strictly on your local filesystem in an encrypted or restricted-permission SQLite database (`~/.config/antigravity-account-switcher/accounts.db`).
-- **No Cloud Telemetry:** This application does not send telemetry, tokens, or personal identifiers to any third-party servers. All proxy traffic flows exclusively between your local Antigravity IDE and official Google Cloud endpoints (`daily-cloudcode-pa.googleapis.com` and `accounts.google.com`).
+- **No Cloud Telemetry:** This application does not send telemetry, tokens, or personal identifiers to any third-party servers. All proxy traffic flows exclusively between your local Antigravity 2.0 application and official Google Cloud endpoints (`daily-cloudcode-pa.googleapis.com` and `accounts.google.com`).

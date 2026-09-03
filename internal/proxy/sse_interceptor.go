@@ -62,7 +62,7 @@ func (s *SSEInterceptor) Intercept(
 }
 
 // StreamAndInterceptSSE streams bytes from upstream to downstream line-by-line
-// using http.Flusher in real-time for zero IDE latency, and inspects SSE data lines
+// using http.Flusher in real-time for zero streaming latency, and inspects SSE data lines
 // to extract usageMetadata. Asynchronously records metrics in a defer block using
 // a detached context to ensure tokens are recorded even if the client disconnects.
 func StreamAndInterceptSSE(

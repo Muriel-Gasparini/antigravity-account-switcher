@@ -28,7 +28,7 @@ type DesktopResult struct {
 	SwitcherBin     string
 }
 
-// InstallDesktop installs a native GNOME/XDG .desktop entry for Antigravity IDE.
+// InstallDesktop installs a native GNOME/XDG .desktop entry for Antigravity 2.0.
 func InstallDesktop(opts DesktopOptions) (*DesktopResult, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

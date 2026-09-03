@@ -75,7 +75,7 @@ func printUsage() {
 	fmt.Println("Usage:")
 	fmt.Println("  antigravity-account-switcher <command> [arguments]")
 	fmt.Println("\nCommands:")
-	fmt.Println("  launch             Launch Antigravity IDE directly with coupled proxy supervisor")
+	fmt.Println("  launch             Launch Google Antigravity 2.0 directly with coupled proxy supervisor")
 	fmt.Println("  serve              Start the local proxy, quota monitor, and web dashboard")
 	fmt.Println("  wrap               Supervise any command with scoped proxy environment (PR_SET_PDEATHSIG)")
 	fmt.Println("  config             Get, set, or list persistent configuration (port, db, paths)")

@@ -77,6 +77,6 @@ run:
 wrap:
 	go run $(CMD_PKG) wrap -- $(CMD)
 
-## launch: Launches Antigravity IDE in ~/tools/Antigravity with coupled switcher
+## launch: Launches Google Antigravity 2.0 with coupled switcher
 launch: build
 	./scripts/launch-antigravity.sh

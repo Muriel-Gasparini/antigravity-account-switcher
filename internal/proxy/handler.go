@@ -157,7 +157,7 @@ func (b *Broadcaster) Subscribe() (<-chan *domain.ProxyEvent, func()) {
 	return ch, unsubscribe
 }
 
-// ProxyHandler is the reverse proxy engine routing IDE requests to Google Cloud Code PA.
+// ProxyHandler is the reverse proxy engine routing Antigravity 2.0 requests to Google Cloud Code PA.
 type ProxyHandler struct {
 	cfg              Config
 	targetURL        *url.URL
