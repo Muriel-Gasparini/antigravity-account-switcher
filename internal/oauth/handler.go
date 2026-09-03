@@ -356,6 +356,13 @@ func NewOAuthService(accountRepo domain.AccountRepository, opts ...Option) *OAut
 		opt(&cfg)
 	}
 
+	if cfg.ClientID == "" && (strings.Contains(cfg.TokenURL, "127.0.0.1") || strings.Contains(cfg.TokenURL, "localhost") || strings.Contains(cfg.AuthURL, "127.0.0.1")) {
+		cfg.ClientID = "test-mock-client-id"
+	}
+	if cfg.ClientSecret == "" && (strings.Contains(cfg.TokenURL, "127.0.0.1") || strings.Contains(cfg.TokenURL, "localhost") || strings.Contains(cfg.AuthURL, "127.0.0.1")) {
+		cfg.ClientSecret = "test-mock-client-secret"
+	}
+
 	client := cfg.HTTPClient
 	if client == nil {
 		client = &http.Client{
@@ -373,13 +380,8 @@ func NewOAuthService(accountRepo domain.AccountRepository, opts ...Option) *OAut
 
 // BuildAuthURL constructs the Google authorization URL with PKCE and CSRF state parameters.
 func (s *OAuthService) BuildAuthURL(redirectURI, state, codeChallenge string) string {
-	clientID := s.cfg.ClientID
-	if clientID == "" && (strings.Contains(s.cfg.AuthURL, "127.0.0.1") || strings.Contains(s.cfg.AuthURL, "localhost")) {
-		clientID = "test-mock-client-id"
-	}
-
 	q := url.Values{}
-	q.Set("client_id", clientID)
+	q.Set("client_id", s.cfg.ClientID)
 	q.Set("redirect_uri", redirectURI)
 	q.Set("response_type", "code")
 	q.Set("scope", strings.Join(s.cfg.Scopes, " "))
@@ -396,12 +398,7 @@ func (s *OAuthService) BuildAuthURL(redirectURI, state, codeChallenge string) st
 // launches the browser, exchanges code for credentials on callback, and returns the saved account.
 func (s *OAuthService) StartLoopbackFlow(ctx context.Context, opener BrowserOpener, urlLogger func(string)) (*domain.Account, error) {
 	if s.cfg.ClientID == "" || s.cfg.ClientSecret == "" {
-		if strings.Contains(s.cfg.TokenURL, "127.0.0.1") || strings.Contains(s.cfg.TokenURL, "localhost") {
-			s.cfg.ClientID = "test-mock-client-id"
-			s.cfg.ClientSecret = "test-mock-client-secret"
-		} else {
-			return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
-		}
+		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -556,21 +553,14 @@ func (s *OAuthService) HandleCallbackRequest(r *http.Request) (*domain.Account, 
 
 // ExchangeCode exchanges an authorization code and PKCE verifier for OAuth2 credentials.
 func (s *OAuthService) ExchangeCode(ctx context.Context, code, codeVerifier, redirectURI string) (*TokenResponse, error) {
-	clientID := s.cfg.ClientID
-	clientSecret := s.cfg.ClientSecret
-	if clientID == "" || clientSecret == "" {
-		if strings.Contains(s.cfg.TokenURL, "127.0.0.1") || strings.Contains(s.cfg.TokenURL, "localhost") {
-			clientID = "test-mock-client-id"
-			clientSecret = "test-mock-client-secret"
-		} else {
-			return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
-		}
+	if s.cfg.ClientID == "" || s.cfg.ClientSecret == "" {
+		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
 	}
 
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
-		"client_id":     {clientID},
-		"client_secret": {clientSecret},
+		"client_id":     {s.cfg.ClientID},
+		"client_secret": {s.cfg.ClientSecret},
 		"code":          {code},
 		"code_verifier": {codeVerifier},
 		"redirect_uri":  {redirectURI},
@@ -715,20 +705,13 @@ func (s *OAuthService) RefreshToken(ctx context.Context, refreshToken string) (*
 		return nil, errors.New("empty refresh token")
 	}
 
-	clientID := s.cfg.ClientID
-	clientSecret := s.cfg.ClientSecret
-	if clientID == "" || clientSecret == "" {
-		if strings.Contains(s.cfg.TokenURL, "127.0.0.1") || strings.Contains(s.cfg.TokenURL, "localhost") {
-			clientID = "test-mock-client-id"
-			clientSecret = "test-mock-client-secret"
-		} else {
-			return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
-		}
+	if s.cfg.ClientID == "" || s.cfg.ClientSecret == "" {
+		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
 	}
 
 	form := url.Values{
-		"client_id":     {clientID},
-		"client_secret": {clientSecret},
+		"client_id":     {s.cfg.ClientID},
+		"client_secret": {s.cfg.ClientSecret},
 		"refresh_token": {refreshToken},
 		"grant_type":    {"refresh_token"},
 	}
