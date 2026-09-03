@@ -497,6 +497,15 @@ func runLaunch(args []string) {
 
 	antigravityBin, err := config.ResolveAntigravityBin(*binFlag)
 	if err != nil {
+		if len(passthroughArgs) > 0 {
+			if lp, lookErr := exec.LookPath(passthroughArgs[0]); lookErr == nil {
+				antigravityBin = lp
+				passthroughArgs = passthroughArgs[1:]
+				err = nil
+			}
+		}
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error resolving Antigravity binary: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Use '--bin /path/to/antigravity' or run 'antigravity-account-switcher config set antigravity_bin <path>'\n")
 		os.Exit(1)

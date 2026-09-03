@@ -88,7 +88,12 @@ func TestTier4_LauncherScriptExecution(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, scriptPath, "echo", "launcher script test successful")
+	echoBin, err := exec.LookPath("echo")
+	if err != nil {
+		t.Fatalf("lookPath echo: %v", err)
+	}
+
+	cmd := exec.CommandContext(ctx, scriptPath, "--bin", echoBin, "launcher script test successful")
 	cmd.Dir = filepath.Dir(scriptPath)
 	cmd.Env = append(os.Environ(), "ANTIGRAVITY_PORT=0")
 	out, err := cmd.CombinedOutput()
