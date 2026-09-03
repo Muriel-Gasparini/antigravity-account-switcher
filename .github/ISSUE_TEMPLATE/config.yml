@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/Muriel-Gasparini/antigravity-account-switcher/security/advisories/new
+    about: Please report security vulnerabilities privately through GitHub Security Advisories.
+  - name: Questions & Community Discussions
+    url: https://github.com/Muriel-Gasparini/antigravity-account-switcher/discussions
+    about: Ask questions, share tips, or discuss usage with other community members.

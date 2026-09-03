@@ -1,0 +1,58 @@
+name: Bug Report
+description: Report a reproducible bug or unexpected behavior in Antigravity Account Switcher
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue! Please ensure you have checked existing issues before filing a new one.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: When launching Antigravity 2.0 with the switcher...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps To Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Run 'antigravity-account-switcher launch'
+        2. Reach quota limit on account A
+        3. See error ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen instead.
+      placeholder: The switcher should rotate to account B and replay the request.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Information
+      description: System and version details.
+      value: |
+        - OS: [e.g. Ubuntu 24.04, Fedora 41, Arch Linux]
+        - Go Version: [e.g. 1.24.0 (if building from source)]
+        - Switcher Version: [output of `antigravity-account-switcher version`]
+        - Antigravity 2.0 Version: [e.g. 2.0.x]
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Terminal Logs / Error Output
+      description: Relevant logs from running the switcher or Antigravity 2.0.
+      render: shell
