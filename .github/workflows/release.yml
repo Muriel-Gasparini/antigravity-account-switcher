@@ -164,25 +164,31 @@ jobs:
             }
           }')
 
-          RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 -w "\n%{http_code}" -X POST \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
+          CANDIDATE_MODELS=("gemini-2.5-flash" "gemini-1.5-flash" "gemini-2.0-flash")
+          for MODEL in "${CANDIDATE_MODELS[@]}"; do
+            echo "Attempting to generate release notes with ${MODEL}..."
+            RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 -w "\n%{http_code}" -X POST \
+              "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent" \
+              -H "Content-Type: application/json" \
+              -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+              -d "$PAYLOAD")
 
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
+            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
 
-          if [ "$HTTP_CODE" = "200" ]; then
-            AI_NOTES=$(echo "$BODY" | jq -r '.candidates[0].content.parts[0].text // empty')
-            if [ -n "$AI_NOTES" ]; then
-              echo "$AI_NOTES" > release_notes.md
-              echo "has_ai=true" >> "$GITHUB_OUTPUT"
-              echo "Successfully generated AI Release Notes!"
-              exit 0
+            if [ "$HTTP_CODE" = "200" ]; then
+              AI_NOTES=$(echo "$BODY" | jq -r '.candidates[0].content.parts[0].text // empty')
+              if [ -n "$AI_NOTES" ]; then
+                echo "$AI_NOTES" > release_notes.md
+                echo "has_ai=true" >> "$GITHUB_OUTPUT"
+                echo "Successfully generated AI Release Notes with ${MODEL}!"
+                exit 0
+              fi
             fi
-          fi
+            echo "Model ${MODEL} returned HTTP ${HTTP_CODE}, trying next fallback..."
+          done
 
-          echo "Warning: Gemini API call returned status ${HTTP_CODE}. Falling back to default release notes."
+          echo "Warning: All Gemini API model calls failed. Falling back to default release notes."
           echo "has_ai=false" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
