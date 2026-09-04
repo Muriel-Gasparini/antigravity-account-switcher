@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate Pre-Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Go Vet
+        run: go vet ./...
+
+      - name: Run Tests
+        run: go test -v -timeout=3m ./...
+
+  release:
+    name: Build and Publish Release
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Set Release Metadata
+        id: vars
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
+            VERSION=$(git describe --tags --always 2>/dev/null || echo "v0.1.0-dev")
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Compile Multi-Platform Static Binaries
+        run: |
+          mkdir -p dist
+          VERSION="${{ steps.vars.outputs.version }}"
+          DATE="${{ steps.vars.outputs.date }}"
+          COMMIT="${GITHUB_SHA::7}"
+
+          LDFLAGS="-s -w -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.Date=${DATE} -extldflags '-static'"
+
+          TARGETS=(
+            "linux/amd64/antigravity-account-switcher"
+            "linux/arm64/antigravity-account-switcher"
+            "darwin/amd64/antigravity-account-switcher"
+            "darwin/arm64/antigravity-account-switcher"
+            "windows/amd64/antigravity-account-switcher.exe"
+          )
+
+          for target in "${TARGETS[@]}"; do
+            IFS="/" read -r GOOS GOARCH BIN_NAME <<< "$target"
+            echo "==> Building for ${GOOS}/${GOARCH}..."
+            OUTPUT_DIR="build/${GOOS}_${GOARCH}"
+            mkdir -p "${OUTPUT_DIR}"
+            
+            CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -trimpath \
+              -ldflags="${LDFLAGS}" \
+              -o "${OUTPUT_DIR}/${BIN_NAME}" ./cmd/antigravity-account-switcher
+
+            ARCHIVE_NAME="antigravity-account-switcher_${VERSION}_${GOOS}_${GOARCH}"
+            if [ "${GOOS}" = "windows" ]; then
+              (cd "${OUTPUT_DIR}" && zip -9 "../../dist/${ARCHIVE_NAME}.zip" "${BIN_NAME}")
+            else
+              tar -czf "dist/${ARCHIVE_NAME}.tar.gz" -C "${OUTPUT_DIR}" "${BIN_NAME}"
+            fi
+          done
+
+      - name: Generate SHA256 Checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Generate AI Release Notes with Gemini
+        id: ai_notes
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || "")
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log "${PREV_TAG}..HEAD" --oneline)
+          else
+            COMMITS=$(git log -n 30 --oneline)
+          fi
+
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY is not configured. Falling back to default GitHub release notes."
+            echo "has_ai=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          VERSION="${{ steps.vars.outputs.version }}"
+          PROMPT="Você é um engenheiro de software sênior responsável pelo projeto open-source 'Antigravity Account Switcher' (supervisor local para Google Antigravity 2.0).
+Analise o histórico de commits abaixo para a versão ${VERSION} e gere Release Notes completos, profissionais e engajadores em Markdown:
+
+Commits da versão:
+${COMMITS}
+
+Diretrizes de formatação:
+## 🚀 O que há de novo na versão ${VERSION}
+(Escreva 1-2 parágrafos resumindo os principais marcos desta versão)
+
+### ✨ Principais Recursos e Melhorias
+(Liste as funcionalidades com emojis e explicação de benefícios práticos)
+
+### 🛡️ Correções de Bugs & Estabilidade
+(Destaque estabilizações, melhorias de concorrência ou resiliência)
+
+### 📦 Instalação & Downloads
+(Explique como baixar o binário para a respectiva plataforma e verificar o sha256 via checksums.txt)
+
+---
+*Release gerado com IA (Google Gemini 2.0 Flash).*
+"
+
+          PAYLOAD=$(jq -n --arg prompt "$PROMPT" '{
+            contents: [{ parts: [{ text: $prompt }] }],
+            generationConfig: {
+              temperature: 0.3
+            }
+          }')
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            AI_NOTES=$(echo "$BODY" | jq -r '.candidates[0].content.parts[0].text // empty')
+            if [ -n "$AI_NOTES" ]; then
+              echo "$AI_NOTES" > release_notes.md
+              echo "has_ai=true" >> "$GITHUB_OUTPUT"
+              echo "Successfully generated AI Release Notes!"
+              exit 0
+            fi
+          fi
+
+          echo "Warning: Gemini API call returned status ${HTTP_CODE}. Falling back to default release notes."
+          echo "has_ai=false" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: ${{ steps.ai_notes.outputs.has_ai == 'true' && 'release_notes.md' || '' }}
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          generate_release_notes: ${{ steps.ai_notes.outputs.has_ai != 'true' }}
+          draft: false
+          prerelease: false
