@@ -1,0 +1,14 @@
+# Cursor Rules for Antigravity Account Switcher
+
+You are assisting on the Antigravity Account Switcher repository.
+All development, architecture, runtime conventions, and quality standards are defined in `AGENTS.md`.
+
+## Core Principles
+1. **Always Read AGENTS.md**: Treat `AGENTS.md` in the project root as the canonical source of truth for architectural invariants, testing protocols, Antigravity 2.0 binary internals, and pull request rules.
+2. **Pure Go / Zero CGO**: Never introduce Cgo or external C libraries. The production binary must compile with `CGO_ENABLED=0` using `modernc.org/sqlite`.
+3. **Validation Workflow**:
+   - Before completing tasks or proposing commits, run `make fmt`, `make lint`, and `make test-race`.
+   - All tests must pass with zero data races.
+   - All linters (`golangci-lint`) must pass with zero errors.
+4. **Hexagonal Architecture**: Maintain strict separation between `domain/`, `store/`, `proxy/`, `launcher/`, `quota/`, and `web/`.
+5. **Conventional Commits**: Format commit messages as `feat:`, `fix:`, `docs:`, `test:`, or `refactor:`.

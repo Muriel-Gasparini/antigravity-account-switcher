@@ -168,4 +168,3 @@ func UninstallDesktop() error {
 
 	return nil
 }
-

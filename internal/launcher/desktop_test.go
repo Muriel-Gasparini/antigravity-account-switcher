@@ -58,4 +58,3 @@ func TestInstallDesktop(t *testing.T) {
 		t.Errorf("expected desktop file to be removed, but still exists")
 	}
 }
-

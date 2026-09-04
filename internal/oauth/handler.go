@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
+	"github.com/google/uuid"
 )
 
 const (

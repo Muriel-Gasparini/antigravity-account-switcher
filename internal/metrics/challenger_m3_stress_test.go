@@ -82,14 +82,14 @@ func TestChallenger_Metrics_TimelineZeroFilling_WideDateRanges(t *testing.T) {
 		inputDays    int
 		expectedDays int
 	}{
-		{-5, 14},   // Non-positive defaults to 14
-		{0, 14},    // Zero defaults to 14
-		{1, 1},     // Today only
-		{7, 7},     // 1 week
-		{14, 14},   // 2 weeks
-		{30, 30},   // 1 month
-		{90, 90},   // 1 quarter
-		{365, 365}, // 1 year
+		{-5, 14},     // Non-positive defaults to 14
+		{0, 14},      // Zero defaults to 14
+		{1, 1},       // Today only
+		{7, 7},       // 1 week
+		{14, 14},     // 2 weeks
+		{30, 30},     // 1 month
+		{90, 90},     // 1 quarter
+		{365, 365},   // 1 year
 		{1000, 1000}, // ~3 years
 	}
 

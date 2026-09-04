@@ -14,7 +14,7 @@ LDFLAGS := -s -w \
 	-X main.Commit=$(COMMIT) \
 	-X main.Date=$(DATE)
 
-.PHONY: all build build-static test test-race test-cover lint tidy clean run wrap help
+.PHONY: all build build-static test test-race test-cover fmt lint tidy clean run wrap help
 
 all: build
 
@@ -43,6 +43,11 @@ test-cover:
 	go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 	go tool cover -html=coverage.txt -o coverage.html
 	@echo "Coverage report generated at coverage.html"
+
+## fmt: Formats all Go source files according to standard Go conventions
+fmt:
+	gofmt -s -w .
+	@echo "Formatted all Go files with gofmt"
 
 ## lint: Runs code linters (go vet and golangci-lint)
 lint:

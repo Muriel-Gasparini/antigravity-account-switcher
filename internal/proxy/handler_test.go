@@ -927,4 +927,3 @@ func TestProxyHandler_ConnectTunneling(t *testing.T) {
 		t.Fatalf("expected payload %q, got %q", string(testPayload), string(replyBuf))
 	}
 }
-
