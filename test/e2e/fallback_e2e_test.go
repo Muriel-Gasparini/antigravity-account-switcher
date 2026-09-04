@@ -539,7 +539,6 @@ func TestTier1_F6_InFlightBodyRewriting(t *testing.T) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	t.Run("rewrite_json_body_model", func(t *testing.T) {
-		env.MockGoogle.Reset()
 		env.MockGoogle.SetAccountQuota("token-f6", []mocks.QuotaSummaryBucket{
 			{
 				BucketID:          "gemini-2.5-pro",
@@ -550,6 +549,8 @@ func TestTier1_F6_InFlightBodyRewriting(t *testing.T) {
 				RemainingFraction: 0.85,
 			},
 		})
+		_ = env.Poller.PollOnce(context.Background())
+		env.MockGoogle.Reset()
 
 		body := `{"model":"gemini-2.5-pro","contents":[{"parts":[{"text":"rewrite test"}]}]}`
 		resp, _ := sendProxyRequest(t, client, env.ServerURL+"/v1internal:generateContent", http.MethodPost, body, nil)
@@ -561,8 +562,8 @@ func TestTier1_F6_InFlightBodyRewriting(t *testing.T) {
 			t.Fatalf("no requests recorded by upstream")
 		}
 		lastReq := reqs[len(reqs)-1]
-		if strings.Contains(string(lastReq.Body), `"model":"gemini-2.5-flash"`) {
-			t.Logf("Verified in-flight body rewriting to secondary model")
+		if !strings.Contains(string(lastReq.Body), `"model":"gemini-2.5-flash"`) {
+			t.Fatalf("expected last request body to contain %q, got: %s", `"model":"gemini-2.5-flash"`, string(lastReq.Body))
 		}
 	})
 
@@ -669,11 +670,12 @@ func TestTier1_F8_PredictiveQuotaFallback(t *testing.T) {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	t.Run("zero_percent_triggers_rewrite", func(t *testing.T) {
-		env.MockGoogle.Reset()
 		env.MockGoogle.SetAccountQuota("token-f8", []mocks.QuotaSummaryBucket{
 			{BucketID: "gemini-2.5-pro", RemainingFraction: 0.0},
 			{BucketID: "gemini-2.5-flash", RemainingFraction: 0.75},
 		})
+		_ = env.Poller.PollOnce(context.Background())
+		env.MockGoogle.Reset()
 
 		body := `{"model":"gemini-2.5-pro","contents":[{"parts":[{"text":"Predictive check"}]}]}`
 		resp, _ := sendProxyRequest(t, client, env.ServerURL+"/v1internal:generateContent", http.MethodPost, body, nil)
@@ -698,7 +700,9 @@ func TestTier1_F8_PredictiveQuotaFallback(t *testing.T) {
 		if len(reqs) == 0 {
 			t.Fatalf("no recorded requests")
 		}
-		t.Logf("Upstream recorded request body: %s", string(reqs[0].Body))
+		if !strings.Contains(string(reqs[0].Body), `"model":"gemini-2.5-flash"`) {
+			t.Errorf("expected upstream request body to contain secondary model gemini-2.5-flash, got: %s", string(reqs[0].Body))
+		}
 	})
 
 	t.Run("telemetry_predictive_trigger", func(t *testing.T) {
@@ -707,15 +711,29 @@ func TestTier1_F8_PredictiveQuotaFallback(t *testing.T) {
 		if err != nil {
 			t.Fatalf("list events: %v", err)
 		}
-		t.Logf("Recent events count: %d", len(events))
+		var found bool
+		for _, ev := range events {
+			if ev.Type == domain.EventTypeModelFallback {
+				mode, _ := ev.Details["mode"].(string)
+				reason, _ := ev.Details["reason"].(string)
+				if mode == "predictive" && reason == "predictive_quota" {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			t.Errorf("expected model_fallback event with Details[mode]=='predictive' and Details[reason]=='predictive_quota'")
+		}
 	})
 
 	t.Run("nonzero_quota_no_rewrite", func(t *testing.T) {
-		env.MockGoogle.Reset()
 		env.MockGoogle.SetAccountQuota("token-f8", []mocks.QuotaSummaryBucket{
 			{BucketID: "gemini-2.5-pro", RemainingFraction: 0.50},
 			{BucketID: "gemini-2.5-flash", RemainingFraction: 0.90},
 		})
+		_ = env.Poller.PollOnce(context.Background())
+		env.MockGoogle.Reset()
 		body := `{"model":"gemini-2.5-pro","contents":[{"parts":[{"text":"Nonzero quota"}]}]}`
 		resp, _ := sendProxyRequest(t, client, env.ServerURL+"/v1internal:generateContent", http.MethodPost, body, nil)
 		if resp.StatusCode != http.StatusOK {
@@ -1730,7 +1748,7 @@ func TestTier4_Scenario2_PredictiveQuotaOptimization_Avoids429Roundtrip(t *testi
 			ResetTime:         time.Now().Add(5 * time.Hour),
 		},
 	})
-
+	_ = env.Poller.PollOnce(context.Background())
 	env.MockGoogle.Reset()
 	client := &http.Client{Timeout: 5 * time.Second}
 	body := `{"model":"gemini-2.5-pro","contents":[{"parts":[{"text":"Zero latency optimization test"}]}]}`
@@ -1741,7 +1759,12 @@ func TestTier4_Scenario2_PredictiveQuotaOptimization_Avoids429Roundtrip(t *testi
 	}
 
 	reqs := env.MockGoogle.GetRecordedRequests()
-	t.Logf("Upstream roundtrips performed: %d", len(reqs))
+	if len(reqs) != 1 {
+		t.Fatalf("expected exactly 1 upstream request (avoiding 429 roundtrip), got %d", len(reqs))
+	}
+	if !strings.Contains(string(reqs[0].Body), `"model":"gemini-2.5-flash"`) {
+		t.Errorf("expected upstream request body to use gemini-2.5-flash, got: %s", string(reqs[0].Body))
+	}
 }
 
 // Scenario 3: Burst of 50 concurrent requests when primary model hits 0%

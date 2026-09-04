@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"flag"
-	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -35,6 +35,7 @@ func TestChallenger_CLI_ConfigErrors_ExitCode1(t *testing.T) {
 		{"set port zero", []string{"set", "port", "0"}, 1, "Invalid port value: 0"},
 		{"set port negative", []string{"set", "port", "-1"}, 1, "Invalid port value: -1"},
 		{"set port string", []string{"set", "port", "eighty"}, 1, "Invalid port value: eighty"},
+		{"set port with suffix", []string{"set", "port", "8080abc"}, 1, "Invalid port value: 8080abc"},
 		{"set port too high", []string{"set", "port", "65536"}, 1, "Configuration validation failed: invalid port 65536"},
 		{"set port way too high", []string{"set", "port", "999999"}, 1, "Configuration validation failed: invalid port 999999"},
 		// Invalid booleans
@@ -162,6 +163,7 @@ func TestChallenger_CLI_SubcommandFlags_ValidationErrors(t *testing.T) {
 // TestChallenger_CLI_ConcurrentExecuteConfig_Race runs 50 concurrent goroutines executing config operations.
 func TestChallenger_CLI_ConcurrentExecuteConfig_Race(t *testing.T) {
 	baseDir := t.TempDir()
+	t.Setenv("ANTIGRAVITY_CONFIG_DIR", baseDir)
 	var wg sync.WaitGroup
 	workers := 50
 
@@ -170,8 +172,6 @@ func TestChallenger_CLI_ConcurrentExecuteConfig_Race(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 
-			// Each worker uses its own isolated config directory
-			workerDir := filepath.Join(baseDir, fmt.Sprintf("worker_%d", id))
 			var stdout, stderr bytes.Buffer
 
 			// Test list
@@ -189,10 +189,88 @@ func TestChallenger_CLI_ConcurrentExecuteConfig_Race(t *testing.T) {
 			if code != 1 {
 				t.Errorf("worker %d: expected code 1 for invalid port, got %d", id, code)
 			}
-
-			_ = workerDir
 		}(i)
 	}
 
 	wg.Wait()
+}
+
+// TestChallenger_CLI_ConfigSet_PreservesMalformedFileOnLoadError verifies that if config.json
+// is malformed, 'config set' aborts with exit code 1 and does NOT overwrite the existing file with defaults.
+func TestChallenger_CLI_ConfigSet_PreservesMalformedFileOnLoadError(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANTIGRAVITY_CONFIG_DIR", dir)
+	cfgFile := filepath.Join(dir, "config.json")
+	corruptContent := []byte("{malformed json:")
+	if err := os.WriteFile(cfgFile, corruptContent, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := executeConfig([]string{"set", "port", "9090"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected code 1 on malformed config load, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "Error loading configuration") {
+		t.Fatalf("expected stderr to report 'Error loading configuration', got: %s", stderr.String())
+	}
+
+	data, err := os.ReadFile(cfgFile)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if string(data) != string(corruptContent) {
+		t.Fatalf("expected file to preserve original content %q, got %q", string(corruptContent), string(data))
+	}
+}
+
+// TestChallenger_CLI_SubcommandFlags_PortAndTargetURL_ValidationErrors tests that CLI flags
+// for --port and --target-url are caught by cfg.Validate() across serve, launch, and wrap.
+func TestChallenger_CLI_SubcommandFlags_PortAndTargetURL_ValidationErrors(t *testing.T) {
+	subcommands := []string{"serve", "launch", "wrap"}
+	for _, sub := range subcommands {
+		t.Run(sub+"_invalid_port", func(t *testing.T) {
+			cfg := config.DefaultConfig()
+			fs := flag.NewFlagSet(sub, flag.ContinueOnError)
+			port := fs.Int("port", 8080, "")
+			targetURL := fs.String("target-url", cfg.UpstreamURL, "")
+			fallbackEnabled, modelPrimary, modelSecondary := addModelFlags(fs, cfg)
+
+			args := []string{"--port=70000"}
+			if err := fs.Parse(args); err != nil {
+				t.Fatalf("parse err: %v", err)
+			}
+			cfg.Port = *port
+			cfg.UpstreamURL = *targetURL
+			cfg.FallbackSecondaryEnabled = *fallbackEnabled
+			cfg.ModelPrimary = *modelPrimary
+			cfg.ModelSecondary = *modelSecondary
+
+			if err := cfg.Validate(); err == nil {
+				t.Errorf("[%s] expected validation error for port 70000, got nil", sub)
+			}
+		})
+
+		t.Run(sub+"_invalid_target_url", func(t *testing.T) {
+			cfg := config.DefaultConfig()
+			fs := flag.NewFlagSet(sub, flag.ContinueOnError)
+			port := fs.Int("port", 8080, "")
+			targetURL := fs.String("target-url", cfg.UpstreamURL, "")
+			fallbackEnabled, modelPrimary, modelSecondary := addModelFlags(fs, cfg)
+
+			args := []string{"--target-url=ftp://invalid-scheme"}
+			if err := fs.Parse(args); err != nil {
+				t.Fatalf("parse err: %v", err)
+			}
+			cfg.Port = *port
+			cfg.UpstreamURL = *targetURL
+			cfg.FallbackSecondaryEnabled = *fallbackEnabled
+			cfg.ModelPrimary = *modelPrimary
+			cfg.ModelSecondary = *modelSecondary
+
+			if err := cfg.Validate(); err == nil {
+				t.Errorf("[%s] expected validation error for ftp scheme, got nil", sub)
+			}
+		})
+	}
 }

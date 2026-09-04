@@ -18,11 +18,8 @@ import (
 // Tier 3: Environment Variables (ANTIGRAVITY_*)
 // Tier 4 (Highest): CLI Flags (--fallback-secondary, --model-primary, --model-secondary)
 func TestChallenger_PrecedenceMatrix(t *testing.T) {
-	tmpDir := t.TempDir()
-	configFilePath := filepath.Join(tmpDir, "config.json")
-
 	// Helper to write config.json
-	writeConfigJSON := func(primary, secondary string, fallback bool) {
+	writeConfigJSON := func(dir, primary, secondary string, fallback bool) {
 		cfg := map[string]any{
 			"port":                       8080,
 			"model_primary":              primary,
@@ -33,7 +30,7 @@ func TestChallenger_PrecedenceMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to marshal test config: %v", err)
 		}
-		if err := os.WriteFile(configFilePath, data, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644); err != nil {
 			t.Fatalf("failed to write test config: %v", err)
 		}
 	}
@@ -201,7 +198,7 @@ func TestChallenger_PrecedenceMatrix(t *testing.T) {
 			t.Run(subcmd, func(t *testing.T) {
 				dir := t.TempDir()
 				t.Setenv("ANTIGRAVITY_CONFIG_DIR", dir)
-				writeConfigJSON("config-p", "config-s", false)
+				writeConfigJSON(dir, "config-p", "config-s", false)
 
 				t.Setenv("ANTIGRAVITY_MODEL_PRIMARY", "env-p")
 				t.Setenv("ANTIGRAVITY_MODEL_SECONDARY", "env-s")

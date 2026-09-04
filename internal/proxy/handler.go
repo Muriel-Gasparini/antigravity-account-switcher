@@ -700,18 +700,20 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 			if resp.StatusCode == http.StatusTooManyRequests {
 				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-				_ = resp.Body.Close()
 				isExhausted = true
 			} else if resp.StatusCode == http.StatusForbidden {
 				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-				_ = resp.Body.Close()
 				if IsExhaustionResponse(resp.StatusCode, bodyBytes) {
 					isExhausted = true
 				} else {
-					// Non-quota 403 Forbidden passthrough
+					// Non-quota 403 Forbidden passthrough: stream prefix + rest of body without truncating
+					defer resp.Body.Close()
 					copyResponseHeaders(w.Header(), resp.Header)
 					w.WriteHeader(resp.StatusCode)
-					_, _ = w.Write(bodyBytes)
+					if len(bodyBytes) > 0 {
+						_, _ = w.Write(bodyBytes)
+					}
+					_, _ = io.Copy(w, resp.Body)
 					return
 				}
 			}
@@ -721,18 +723,32 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				lastRespHeader = resp.Header.Clone()
 				lastErrBody = bodyBytes
 
+				forwardTerminal := func() {
+					defer resp.Body.Close()
+					copyResponseHeaders(w.Header(), resp.Header)
+					w.WriteHeader(resp.StatusCode)
+					if len(bodyBytes) > 0 {
+						_, _ = w.Write(bodyBytes)
+					}
+					_, _ = io.Copy(w, resp.Body)
+				}
+
+				discardAndClose := func() {
+					_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 512*1024))
+					_ = resp.Body.Close()
+				}
+
 				if h.failoverEngine != nil {
 					action, targetModel, nextAcc, failoverErr := h.failoverEngine.HandleExhaustion(ctx, currentAcc, currentModel)
 					if failoverErr != nil || nextAcc == nil {
 						// Entire account pool is exhausted! Forward upstream 429 response verbatim
-						copyResponseHeaders(w.Header(), resp.Header)
-						w.WriteHeader(resp.StatusCode)
-						_, _ = w.Write(bodyBytes)
+						forwardTerminal()
 						return
 					}
 
 					switch action {
 					case ActionFallbackSecondary:
+						discardAndClose()
 						// Intra-account fallback: rewrite to secondary model on SAME account
 						currentModel = targetModel
 						currentPath = RewriteModelInPath(origPath, targetModel)
@@ -753,6 +769,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						continue
 
 					case ActionRotateAccount:
+						discardAndClose()
 						// Account rotated: switch to nextAcc, reset back to primary model and original body
 						currentAcc = nextAcc
 						currentModel = origModel
@@ -783,19 +800,16 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 					default:
 						// ActionNone: return upstream response
-						copyResponseHeaders(w.Header(), resp.Header)
-						w.WriteHeader(resp.StatusCode)
-						_, _ = w.Write(bodyBytes)
+						forwardTerminal()
 						return
 					}
 				} else {
 					nextAcc, rotateErr := h.accountRepo.GetNextAvailable(ctx, currentAcc.ID)
 					if rotateErr != nil || nextAcc == nil {
-						copyResponseHeaders(w.Header(), resp.Header)
-						w.WriteHeader(resp.StatusCode)
-						_, _ = w.Write(bodyBytes)
+						forwardTerminal()
 						return
 					}
+					discardAndClose()
 					_ = h.accountRepo.UpdateStatus(ctx, currentAcc.ID, domain.AccountStatusExhausted)
 					_ = h.accountRepo.SetActive(ctx, nextAcc.ID)
 					currentAcc = nextAcc
@@ -832,6 +846,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if lastRespStatusCode > 0 {
 		if lastRespHeader != nil {
 			copyResponseHeaders(w.Header(), lastRespHeader)
+			w.Header().Del("Content-Length")
 		}
 		w.WriteHeader(lastRespStatusCode)
 		if len(lastErrBody) > 0 {

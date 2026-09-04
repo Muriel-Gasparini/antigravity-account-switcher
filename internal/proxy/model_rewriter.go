@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -336,13 +337,32 @@ func RewriteModelInBody(body []byte, targetModel string) ([]byte, error) {
 	hasPrefix := bytes.HasPrefix(oldModel, prefixModels)
 	cleanTarget := strings.TrimPrefix(targetModel, "models/")
 
+	var escapedTarget string
+	needsEscape := false
+	for i := 0; i < len(cleanTarget); i++ {
+		c := cleanTarget[i]
+		if c == '"' || c == '\\' || c < 0x20 {
+			needsEscape = true
+			break
+		}
+	}
+	if needsEscape {
+		escapedBytes, err := json.Marshal(cleanTarget)
+		if err != nil {
+			return nil, err
+		}
+		escapedTarget = string(escapedBytes[1 : len(escapedBytes)-1])
+	} else {
+		escapedTarget = cleanTarget
+	}
+
 	prefixLen := 0
 	if hasPrefix {
 		prefixLen = len("models/")
 	}
 
 	oldLen := endValIdx - startValIdx
-	newLen := prefixLen + len(cleanTarget)
+	newLen := prefixLen + len(escapedTarget)
 	delta := newLen - oldLen
 	newBody := make([]byte, len(body)+delta)
 
@@ -353,7 +373,7 @@ func RewriteModelInBody(body []byte, targetModel string) ([]byte, error) {
 	if prefixLen > 0 {
 		copy(newBody[startValIdx:], "models/")
 	}
-	copy(newBody[startValIdx+prefixLen:], cleanTarget)
+	copy(newBody[startValIdx+prefixLen:], escapedTarget)
 
 	// Segment 3: Suffix after model value
 	copy(newBody[startValIdx+newLen:], body[endValIdx:])

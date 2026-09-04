@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1336,6 +1337,116 @@ func BenchmarkPredictiveCheck_CacheHit(b *testing.B) {
 		rewrite, target, err := engine.PredictiveCheck(ctx, acc, "claude-3-5-sonnet")
 		if !rewrite || target != "gemini-2.5-pro" || err != nil {
 			b.Fatalf("unexpected result: rewrite=%v, target=%s, err=%v", rewrite, target, err)
+		}
+	}
+}
+
+func TestFailoverEngine_SameCategory_SecondaryQuotaPreservedAfterPrimaryExhaustion(t *testing.T) {
+	acc := &domain.Account{ID: "acc-same-cat", Email: "samecat@example.com", Status: domain.AccountStatusActive}
+	mockRepo := newMockAccountRepo()
+	mockRepo.addAccount(acc)
+	engine := NewFailoverEngine(mockRepo, nil, nil,
+		WithModelFallback("gemini-2.5-pro", "gemini-2.5-flash", true),
+	)
+
+	// Seed cache with Pro exhausted (0%) and Flash available (85%)
+	engine.UpdateQuotaCache(acc.ID, []*domain.QuotaBucket{
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-pro",
+			DisplayName:       "Gemini 2.5 Pro",
+			RemainingFraction: 1.0,
+			RemainingAmount:   100,
+			ResetTime:         time.Now().Add(5 * time.Hour),
+		},
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-flash",
+			DisplayName:       "Gemini 2.5 Flash",
+			RemainingFraction: 0.85,
+			RemainingAmount:   850,
+			ResetTime:         time.Now().Add(5 * time.Hour),
+		},
+	})
+
+	ctx := context.Background()
+
+	// Reactive 429 on primary model (gemini-2.5-pro)
+	action, targetModel, nextAcc, err := engine.HandleExhaustion(ctx, acc, "gemini-2.5-pro")
+	if err != nil {
+		t.Fatalf("HandleExhaustion unexpected error: %v", err)
+	}
+	if action != ActionFallbackSecondary {
+		t.Fatalf("expected ActionFallbackSecondary, got %v", action)
+	}
+	if targetModel != "gemini-2.5-flash" {
+		t.Errorf("expected targetModel 'gemini-2.5-flash', got %s", targetModel)
+	}
+	if nextAcc.ID != acc.ID {
+		t.Errorf("expected same account %s, got %s", acc.ID, nextAcc.ID)
+	}
+
+	// Verify that flash quota was NOT zeroed out in quotaCache
+	buckets := engine.quotaCache[acc.ID]
+	for _, b := range buckets {
+		if strings.Contains(b.bucketIDLower, "flash") {
+			if b.remainingFraction <= 0.0 {
+				t.Fatalf("flash bucket was incorrectly zeroed out by primary exhaustion!")
+			}
+		}
+	}
+
+	// Subsequent predictive check must still find secondary available and rewrite!
+	rewrite, target, err := engine.PredictiveCheck(ctx, acc, "gemini-2.5-pro")
+	if err != nil {
+		t.Fatalf("PredictiveCheck unexpected error: %v", err)
+	}
+	if !rewrite {
+		t.Fatalf("expected predictive rewrite to succeed because flash still has quota")
+	}
+	if target != "gemini-2.5-flash" {
+		t.Errorf("expected predictive target 'gemini-2.5-flash', got %s", target)
+	}
+}
+
+func TestFailoverEngine_PredictiveCheck_MixedCase(t *testing.T) {
+	acc := &domain.Account{ID: "acc-case", Email: "case@example.com", Status: domain.AccountStatusActive}
+	mockRepo := newMockAccountRepo()
+	mockRepo.addAccount(acc)
+	engine := NewFailoverEngine(mockRepo, nil, nil,
+		WithModelFallback("gemini-2.5-pro", "gemini-2.5-flash", true),
+	)
+
+	engine.UpdateQuotaCache(acc.ID, []*domain.QuotaBucket{
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-pro",
+			DisplayName:       "Gemini 2.5 Pro",
+			RemainingFraction: 0.0,
+			ResetTime:         time.Now().Add(5 * time.Hour),
+		},
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-flash",
+			DisplayName:       "Gemini 2.5 Flash",
+			RemainingFraction: 0.9,
+			ResetTime:         time.Now().Add(5 * time.Hour),
+		},
+	})
+
+	ctx := context.Background()
+
+	cases := []string{"Gemini-2.5-Pro", "GEMINI-2.5-PRO", "models/Gemini-2.5-Pro"}
+	for _, c := range cases {
+		rewrite, target, err := engine.PredictiveCheck(ctx, acc, c)
+		if err != nil {
+			t.Errorf("[%s] unexpected error: %v", c, err)
+		}
+		if !rewrite {
+			t.Errorf("[%s] expected rewrite for mixed-case model name, got false", c)
+		}
+		if target != "gemini-2.5-flash" {
+			t.Errorf("[%s] expected target 'gemini-2.5-flash', got %s", c, target)
 		}
 	}
 }

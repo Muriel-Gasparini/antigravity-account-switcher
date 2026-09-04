@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -114,7 +115,10 @@ func addModelFlags(fs *flag.FlagSet, cfg *config.Config) (fallbackSecondary *boo
 }
 
 func runServe(args []string) {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load configuration: %v\n", err)
+	}
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
@@ -142,6 +146,8 @@ func runServe(args []string) {
 	fallbackSecondary, modelPrimary, modelSecondary := addModelFlags(fs, cfg)
 	_ = fs.Parse(args)
 
+	cfg.Port = *port
+	cfg.UpstreamURL = *targetURL
 	cfg.FallbackSecondaryEnabled = *fallbackSecondary
 	cfg.ModelPrimary = *modelPrimary
 	cfg.ModelSecondary = *modelSecondary
@@ -274,7 +280,10 @@ func runServe(args []string) {
 }
 
 func runWrap(args []string) {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load configuration: %v\n", err)
+	}
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
@@ -318,6 +327,14 @@ func runWrap(args []string) {
 		cmdToRun = fs.Args()
 	}
 
+	if *port < 0 || *port > 65535 {
+		fmt.Fprintf(os.Stderr, "Configuration error: invalid port %d: must be between 0 and 65535\n", *port)
+		os.Exit(1)
+	}
+	if *port > 0 {
+		cfg.Port = *port
+	}
+	cfg.UpstreamURL = *targetURL
 	cfg.FallbackSecondaryEnabled = *fallbackSecondary
 	cfg.ModelPrimary = *modelPrimary
 	cfg.ModelSecondary = *modelSecondary
@@ -508,7 +525,10 @@ func runStatus(args []string) {
 }
 
 func runLaunch(args []string) {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load configuration: %v\n", err)
+	}
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
@@ -550,6 +570,8 @@ func runLaunch(args []string) {
 		passthroughArgs = fs.Args()
 	}
 
+	cfg.Port = *port
+	cfg.UpstreamURL = *targetURL
 	cfg.FallbackSecondaryEnabled = *fallbackSecondary
 	cfg.ModelPrimary = *modelPrimary
 	cfg.ModelSecondary = *modelSecondary
@@ -619,7 +641,10 @@ func runConfig(args []string) {
 
 func executeConfig(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "list" {
-		cfg, _ := config.Load()
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(stderr, "Warning: failed to load configuration: %v\n", err)
+		}
 		if cfg == nil {
 			cfg = config.DefaultConfig()
 		}
@@ -644,7 +669,10 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		key := args[1]
-		cfg, _ := config.Load()
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(stderr, "Warning: failed to load configuration: %v\n", err)
+		}
 		if cfg == nil {
 			cfg = config.DefaultConfig()
 		}
@@ -680,7 +708,11 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 		}
 		key := args[1]
 		val := args[2]
-		cfg, _ := config.Load()
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(stderr, "Error loading configuration: %v\n", err)
+			return 1
+		}
 		if cfg == nil {
 			cfg = config.DefaultConfig()
 		}
@@ -688,8 +720,8 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 		case "antigravity_bin":
 			cfg.AntigravityBin = val
 		case "port":
-			var p int
-			if _, err := fmt.Sscanf(val, "%d", &p); err != nil || p <= 0 {
+			p, err := strconv.Atoi(val)
+			if err != nil || p <= 0 {
 				fmt.Fprintf(stderr, "Invalid port value: %s\n", val)
 				return 1
 			}

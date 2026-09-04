@@ -2,6 +2,7 @@ package proxy_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -1040,5 +1041,48 @@ func BenchmarkRewriteModelInQuery(b *testing.B) {
 		if len(res) == 0 {
 			b.Fatalf("empty rewritten query")
 		}
+	}
+}
+
+func TestRewriteModelInBody_Escaping(t *testing.T) {
+	cases := []struct {
+		name        string
+		targetModel string
+		expectedVal string
+	}{
+		{
+			name:        "quotes in model",
+			targetModel: `model"with"quotes`,
+			expectedVal: `model"with"quotes`,
+		},
+		{
+			name:        "backslashes in model",
+			targetModel: `model\with\slashes`,
+			expectedVal: `model\with\slashes`,
+		},
+		{
+			name:        "newlines and tabs in model",
+			targetModel: "model\nwith\ttab",
+			expectedVal: "model\nwith\ttab",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := []byte(`{"model":"gemini-2.5-pro","prompt":"test"}`)
+			rewritten, err := proxy.RewriteModelInBody(input, tc.targetModel)
+			if err != nil {
+				t.Fatalf("RewriteModelInBody failed: %v", err)
+			}
+
+			// Must be strictly valid JSON
+			var parsed map[string]any
+			if err := json.Unmarshal(rewritten, &parsed); err != nil {
+				t.Fatalf("rewritten body is not valid JSON (%v): %s", err, string(rewritten))
+			}
+			if parsed["model"] != tc.expectedVal {
+				t.Errorf("expected model field %q, got %q", tc.expectedVal, parsed["model"])
+			}
+		})
 	}
 }

@@ -689,8 +689,14 @@ func TestM4Challenger2_MidStreamClientDisconnect(t *testing.T) {
 		// Attempting further read should return error or EOF
 		_, _ = io.ReadAll(resp.Body)
 
-		// Ensure no goroutine leaks or panics, and upstream detected disconnect
-		time.Sleep(100 * time.Millisecond)
+		// Wait for upstream to detect client cancellation / disconnect
+		deadline := time.Now().Add(2 * time.Second)
+		for atomic.LoadInt32(&upstreamBodyClosed) == 0 && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if atomic.LoadInt32(&upstreamBodyClosed) != 1 {
+			t.Errorf("upstream did not detect client disconnect within deadline")
+		}
 	})
 }
 
@@ -808,12 +814,15 @@ func TestM4Challenger2_Protocol_OutReqGetBodyInServeHTTP(t *testing.T) {
 	_ = env.quotaRepo.UpsertBuckets(ctx, buckets)
 	env.failoverEngine.UpdateQuotaCache(acc.ID, buckets)
 
+	var interceptedMu sync.Mutex
 	var interceptedReq *http.Request
 	origTransport := env.handler.client.Transport
 
 	// Wrap handler client transport to intercept the outReq
 	env.handler.client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		interceptedMu.Lock()
 		interceptedReq = req
+		interceptedMu.Unlock()
 
 		// 1. Verify ContentLength field
 		expectedBody := `{"model":"gemini-2.5-flash","prompt":"testing protocol fidelity"}`
@@ -835,18 +844,22 @@ func TestM4Challenger2_Protocol_OutReqGetBodyInServeHTTP(t *testing.T) {
 			for attempt := 0; attempt < 5; attempt++ {
 				reader, err := req.GetBody()
 				if err != nil {
-					t.Fatalf("GetBody invocation #%d failed: %v", attempt, err)
+					t.Errorf("GetBody invocation #%d failed: %v", attempt, err)
+					break
 				}
 				content, err := io.ReadAll(reader)
 				_ = reader.Close()
 				if err != nil {
-					t.Fatalf("read from GetBody #%d failed: %v", attempt, err)
+					t.Errorf("read from GetBody #%d failed: %v", attempt, err)
+					break
 				}
 				if string(content) != expectedBody {
-					t.Fatalf("GetBody #%d content mismatch: got %q, want %q", attempt, string(content), expectedBody)
+					t.Errorf("GetBody #%d content mismatch: got %q, want %q", attempt, string(content), expectedBody)
+					break
 				}
 				if sha256.Sum256(content) != expectedHash {
-					t.Fatalf("GetBody #%d sha256 mismatch", attempt)
+					t.Errorf("GetBody #%d sha256 mismatch", attempt)
+					break
 				}
 			}
 		}
@@ -870,7 +883,10 @@ func TestM4Challenger2_Protocol_OutReqGetBodyInServeHTTP(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
 	}
-	if interceptedReq == nil {
+	interceptedMu.Lock()
+	savedReq := interceptedReq
+	interceptedMu.Unlock()
+	if savedReq == nil {
 		t.Fatal("expected request to be intercepted by transport wrapper")
 	}
 }
