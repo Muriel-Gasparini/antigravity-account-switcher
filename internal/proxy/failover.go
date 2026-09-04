@@ -363,14 +363,22 @@ func (f *FailoverEngine) markCategoryExhaustedLocked(accountID string, cat Model
 	}
 }
 
+// MarkModelExhausted records an immediate exhaustion for a specific model on an account.
+func (f *FailoverEngine) MarkModelExhausted(accountID string, model string, resetTime time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.markModelExhaustedLocked(accountID, model, resetTime)
+}
+
 func (f *FailoverEngine) ensureQuotaBucketsPrefetched(ctx context.Context, accountID string) {
 	if accountID == "" || f.quotaRepo == nil {
 		return
 	}
 	f.mu.RLock()
-	cached := f.quotaCache != nil && len(f.quotaCache[accountID]) > 0
+	cached := f.quotaCache != nil
+	_, exists := f.quotaCache[accountID]
 	f.mu.RUnlock()
-	if cached {
+	if cached && exists {
 		return
 	}
 
@@ -378,6 +386,14 @@ func (f *FailoverEngine) ensureQuotaBucketsPrefetched(ctx context.Context, accou
 	defer cancel()
 	dbBuckets, err := f.quotaRepo.GetByAccountID(qCtx, accountID)
 	if err != nil || len(dbBuckets) == 0 {
+		f.mu.Lock()
+		if f.quotaCache == nil {
+			f.quotaCache = make(map[string][]cachedQuotaBucket)
+		}
+		if _, ok := f.quotaCache[accountID]; !ok {
+			f.quotaCache[accountID] = []cachedQuotaBucket{}
+		}
+		f.mu.Unlock()
 		return
 	}
 	f.UpdateQuotaCache(accountID, dbBuckets)
@@ -928,8 +944,29 @@ func (f *FailoverEngine) HandleExhaustion(
 	// 5. If failedModel was secondary OR secondary is also exhausted: total account exhaustion
 	state.primaryExhausted = true
 	state.secondaryExhausted = true
+	var resetTime time.Time
 	if state.primaryResetTime.IsZero() || time.Now().UTC().After(state.primaryResetTime) {
-		state.primaryResetTime = time.Now().UTC().Add(5 * time.Minute)
+		resetTime = time.Now().UTC().Add(5 * time.Minute)
+		state.primaryResetTime = resetTime
+	} else {
+		resetTime = state.primaryResetTime
+	}
+	if isSecondary {
+		var secReset time.Time
+		buckets := f.getAccountBucketsLocked(ctx, acc.ID)
+		for i := range buckets {
+			b := &buckets[i]
+			if f.matchesCachedBucket(b, f.secondaryLower, f.secondaryCat, f.secondaryHasPro, f.secondaryHasFlash, f.primaryLower, f.primaryCat, f.primaryHasPro, f.primaryHasFlash) {
+				if !b.resetTime.IsZero() && b.resetTime.After(time.Now().UTC()) {
+					secReset = b.resetTime
+					break
+				}
+			}
+		}
+		if secReset.IsZero() {
+			secReset = resetTime
+		}
+		f.markModelExhaustedLocked(acc.ID, secondary, secReset)
 	}
 
 	next, rotErr := f.rotateAccountLocked(ctx, acc, &eventsToEmit)

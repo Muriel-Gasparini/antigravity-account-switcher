@@ -335,7 +335,10 @@ func RewriteModelInBody(body []byte, targetModel string) ([]byte, error) {
 	}
 
 	hasPrefix := bytes.HasPrefix(oldModel, prefixModels)
-	cleanTarget := strings.TrimPrefix(targetModel, "models/")
+	cleanTarget := NormalizeModelName(targetModel)
+	if cleanTarget == "" {
+		return body, nil
+	}
 
 	var escapedTarget string
 	needsEscape := false

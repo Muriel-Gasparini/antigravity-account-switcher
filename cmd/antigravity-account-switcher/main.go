@@ -720,7 +720,7 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 		case "antigravity_bin":
 			cfg.AntigravityBin = val
 		case "port":
-			p, err := strconv.Atoi(val)
+			p, err := strconv.Atoi(strings.TrimSpace(val))
 			if err != nil || p <= 0 {
 				fmt.Fprintf(stderr, "Invalid port value: %s\n", val)
 				return 1

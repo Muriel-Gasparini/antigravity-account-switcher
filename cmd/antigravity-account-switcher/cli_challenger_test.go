@@ -224,6 +224,52 @@ func TestChallenger_CLI_ConfigSet_PreservesMalformedFileOnLoadError(t *testing.T
 	}
 }
 
+// TestChallenger_CLI_ConfigSet_PortValidation tests port string parsing, trimming, suffixes, and bounds.
+func TestChallenger_CLI_ConfigSet_PortValidation(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ANTIGRAVITY_CONFIG_DIR", dir)
+
+	var stdout, stderr bytes.Buffer
+
+	// 1. Whitespace around valid port should succeed
+	code := executeConfig([]string{"set", "port", "  9090  "}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected code 0 for trimmed valid port, got %d: %s", code, stderr.String())
+	}
+
+	// Verify get returns 9090
+	stdout.Reset()
+	stderr.Reset()
+	code = executeConfig([]string{"get", "port"}, &stdout, &stderr)
+	if code != 0 || strings.TrimSpace(stdout.String()) != "9090" {
+		t.Fatalf("expected port 9090, got: %s", stdout.String())
+	}
+
+	// 2. Out of range port (>65535) should fail
+	stdout.Reset()
+	stderr.Reset()
+	code = executeConfig([]string{"set", "port", "70000"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("expected code 1 for port 70000, got %d", code)
+	}
+
+	// 3. Port with invalid suffix should fail
+	stdout.Reset()
+	stderr.Reset()
+	code = executeConfig([]string{"set", "port", "8080abc"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("expected code 1 for port 8080abc, got %d", code)
+	}
+
+	// 4. Negative port should fail
+	stdout.Reset()
+	stderr.Reset()
+	code = executeConfig([]string{"set", "port", "-1"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("expected code 1 for port -1, got %d", code)
+	}
+}
+
 // TestChallenger_CLI_SubcommandFlags_PortAndTargetURL_ValidationErrors tests that CLI flags
 // for --port and --target-url are caught by cfg.Validate() across serve, launch, and wrap.
 func TestChallenger_CLI_SubcommandFlags_PortAndTargetURL_ValidationErrors(t *testing.T) {

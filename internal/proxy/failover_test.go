@@ -1450,3 +1450,110 @@ func TestFailoverEngine_PredictiveCheck_MixedCase(t *testing.T) {
 		}
 	}
 }
+
+func TestFailoverEngine_SecondaryExhaustion_MarksSecondaryBucket(t *testing.T) {
+	acc1 := &domain.Account{ID: "acc-sec-1", Email: "sec1@example.com", Status: domain.AccountStatusActive, IsActive: true}
+	acc2 := &domain.Account{ID: "acc-sec-2", Email: "sec2@example.com", Status: domain.AccountStatusActive, IsActive: false}
+	mockRepo := newMockAccountRepo()
+	mockRepo.addAccount(acc1)
+	mockRepo.addAccount(acc2)
+
+	engine := NewFailoverEngine(mockRepo, nil, nil,
+		WithModelFallback("gemini-2.5-pro", "gemini-2.5-flash", true),
+	)
+
+	engine.UpdateQuotaCache(acc1.ID, []*domain.QuotaBucket{
+		{
+			AccountID:         acc1.ID,
+			BucketID:          "gemini-2.5-pro",
+			DisplayName:       "Gemini 2.5 Pro",
+			RemainingFraction: 0.0,
+			ResetTime:         time.Now().Add(5 * time.Hour),
+		},
+		{
+			AccountID:         acc1.ID,
+			BucketID:          "gemini-2.5-flash",
+			DisplayName:       "Gemini 2.5 Flash",
+			RemainingFraction: 0.8,
+			ResetTime:         time.Now().Add(5 * time.Hour),
+		},
+	})
+
+	ctx := context.Background()
+
+	// Secondary model encounters HTTP 429
+	action, _, nextAcc, err := engine.HandleExhaustion(ctx, acc1, "gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if action != ActionRotateAccount {
+		t.Errorf("expected ActionRotateAccount, got %v", action)
+	}
+	if nextAcc.ID != acc2.ID {
+		t.Errorf("expected rotation to acc2, got %s", nextAcc.ID)
+	}
+
+	// Verify secondary model bucket in acc1 cache is now exhausted (0.0)
+	engine.mu.RLock()
+	buckets := engine.quotaCache[acc1.ID]
+	engine.mu.RUnlock()
+
+	var flashFound bool
+	for _, b := range buckets {
+		if strings.Contains(b.bucketIDLower, "flash") {
+			flashFound = true
+			if b.remainingFraction != 0.0 {
+				t.Errorf("expected secondary bucket remaining fraction 0.0, got %f", b.remainingFraction)
+			}
+		}
+	}
+	if !flashFound {
+		t.Errorf("expected flash bucket in quotaCache")
+	}
+}
+
+func TestFailoverEngine_MarkModelExhausted(t *testing.T) {
+	acc := &domain.Account{ID: "acc-mme", Email: "mme@example.com", Status: domain.AccountStatusActive}
+	mockRepo := newMockAccountRepo()
+	mockRepo.addAccount(acc)
+	engine := NewFailoverEngine(mockRepo, nil, nil,
+		WithModelFallback("gemini-2.5-pro", "gemini-2.5-flash", true),
+	)
+
+	engine.UpdateQuotaCache(acc.ID, []*domain.QuotaBucket{
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-pro",
+			DisplayName:       "Gemini 2.5 Pro",
+			RemainingFraction: 0.9,
+			ResetTime:         time.Now().Add(5 * time.Hour),
+		},
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-flash",
+			DisplayName:       "Gemini 2.5 Flash",
+			RemainingFraction: 0.8,
+			ResetTime:         time.Now().Add(5 * time.Hour),
+		},
+	})
+
+	reset := time.Now().Add(2 * time.Hour)
+	engine.MarkModelExhausted(acc.ID, "gemini-2.5-pro", reset)
+
+	engine.mu.RLock()
+	buckets := engine.quotaCache[acc.ID]
+	engine.mu.RUnlock()
+
+	for _, b := range buckets {
+		if strings.Contains(b.bucketIDLower, "pro") {
+			if b.remainingFraction != 0.0 {
+				t.Errorf("expected pro bucket remaining fraction 0.0, got %f", b.remainingFraction)
+			}
+		}
+		if strings.Contains(b.bucketIDLower, "flash") {
+			if b.remainingFraction != 0.8 {
+				t.Errorf("expected flash bucket remaining fraction 0.8, got %f", b.remainingFraction)
+			}
+		}
+	}
+}

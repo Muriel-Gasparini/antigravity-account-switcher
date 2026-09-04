@@ -683,9 +683,10 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Check for expired/invalid credentials: HTTP 401 Unauthorized
 		if !isPassThrough && currentAcc != nil && resp.StatusCode == http.StatusUnauthorized && h.tokenRefresher != nil && currentAcc.RefreshToken != "" {
-			_ = resp.Body.Close()
 			newAccess, newExpiry, refErr := h.tokenRefresher.RefreshToken(ctx, currentAcc.RefreshToken)
 			if refErr == nil {
+				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 512*1024))
+				_ = resp.Body.Close()
 				_ = h.accountRepo.UpdateToken(ctx, currentAcc.ID, newAccess, newExpiry)
 				currentAcc.AccessToken = newAccess
 				currentAcc.TokenExpiry = newExpiry
@@ -714,6 +715,9 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						_, _ = w.Write(bodyBytes)
 					}
 					_, _ = io.Copy(w, resp.Body)
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
 					return
 				}
 			}
@@ -731,6 +735,9 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						_, _ = w.Write(bodyBytes)
 					}
 					_, _ = io.Copy(w, resp.Body)
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
 				}
 
 				discardAndClose := func() {

@@ -1065,6 +1065,11 @@ func TestRewriteModelInBody_Escaping(t *testing.T) {
 			targetModel: "model\nwith\ttab",
 			expectedVal: "model\nwith\ttab",
 		},
+		{
+			name:        "whitespace trimmed and models prefix removed",
+			targetModel: "  models/gemini-2.5-flash  ",
+			expectedVal: "gemini-2.5-flash",
+		},
 	}
 
 	for _, tc := range cases {
