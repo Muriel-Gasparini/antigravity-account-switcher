@@ -5,9 +5,18 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build (e.g. v0.1.0)'
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -33,6 +42,8 @@ jobs:
     name: Build and Publish Release
     runs-on: ubuntu-latest
     needs: validate
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -48,9 +59,15 @@ jobs:
       - name: Set Release Metadata
         id: vars
         run: |
-          VERSION="${GITHUB_REF_NAME}"
-          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then
-            VERSION=$(git describe --tags --always 2>/dev/null || echo "v0.1.0-dev")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            INPUT_TAG="${{ github.event.inputs.tag }}"
+            if [[ ! "$INPUT_TAG" =~ ^v[0-9] ]] || [[ "$INPUT_TAG" == *"/"* ]]; then
+              echo "Error: manual tag must follow format 'v*' and not contain slashes (got '$INPUT_TAG')"
+              exit 1
+            fi
+            VERSION="$INPUT_TAG"
+          else
+            VERSION="${GITHUB_REF_NAME}"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
@@ -70,6 +87,7 @@ jobs:
             "darwin/amd64/antigravity-account-switcher"
             "darwin/arm64/antigravity-account-switcher"
             "windows/amd64/antigravity-account-switcher.exe"
+            "windows/arm64/antigravity-account-switcher.exe"
           )
 
           for target in "${TARGETS[@]}"; do
@@ -116,27 +134,27 @@ jobs:
 
           VERSION="${{ steps.vars.outputs.version }}"
           PROMPT="Você é um engenheiro de software sênior responsável pelo projeto open-source 'Antigravity Account Switcher' (supervisor local para Google Antigravity 2.0).
-Analise o histórico de commits abaixo para a versão ${VERSION} e gere Release Notes completos, profissionais e engajadores em Markdown:
+          Analise o histórico de commits abaixo para a versão ${VERSION} e gere Release Notes completos, profissionais e engajadores em Markdown:
 
-Commits da versão:
-${COMMITS}
+          Commits da versão:
+          ${COMMITS}
 
-Diretrizes de formatação:
-## 🚀 O que há de novo na versão ${VERSION}
-(Escreva 1-2 parágrafos resumindo os principais marcos desta versão)
+          Diretrizes de formatação:
+          ## 🚀 O que há de novo na versão ${VERSION}
+          (Escreva 1-2 parágrafos resumindo os principais marcos desta versão)
 
-### ✨ Principais Recursos e Melhorias
-(Liste as funcionalidades com emojis e explicação de benefícios práticos)
+          ### ✨ Principais Recursos e Melhorias
+          (Liste as funcionalidades com emojis e explicação de benefícios práticos)
 
-### 🛡️ Correções de Bugs & Estabilidade
-(Destaque estabilizações, melhorias de concorrência ou resiliência)
+          ### 🛡️ Correções de Bugs & Estabilidade
+          (Destaque estabilizações, melhorias de concorrência ou resiliência)
 
-### 📦 Instalação & Downloads
-(Explique como baixar o binário para a respectiva plataforma e verificar o sha256 via checksums.txt)
+          ### 📦 Instalação & Downloads
+          (Explique como baixar o binário para a respectiva plataforma e verificar o sha256 via checksums.txt)
 
----
-*Release gerado com IA (Google Gemini 2.0 Flash).*
-"
+          ---
+          *Release gerado com IA (Google Gemini 2.0 Flash).*
+          "
 
           PAYLOAD=$(jq -n --arg prompt "$PROMPT" '{
             contents: [{ parts: [{ text: $prompt }] }],
@@ -145,7 +163,7 @@ Diretrizes de formatação:
             }
           }')
 
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+          RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 -w "\n%{http_code}" -X POST \
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
@@ -169,6 +187,7 @@ Diretrizes de formatação:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.vars.outputs.version }}
           body_path: ${{ steps.ai_notes.outputs.has_ai == 'true' && 'release_notes.md' || '' }}
           files: |
             dist/*.tar.gz
