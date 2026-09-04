@@ -28,6 +28,7 @@ type mockFlushRecorder struct {
 	statusCode int
 	flushCount int
 	writeErr   error
+	onWrite    func(b []byte)
 	mu         sync.Mutex
 }
 
@@ -44,6 +45,9 @@ func (m *mockFlushRecorder) Header() http.Header {
 func (m *mockFlushRecorder) Write(b []byte) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.onWrite != nil {
+		m.onWrite(b)
+	}
 	if m.writeErr != nil {
 		return 0, m.writeErr
 	}
@@ -275,29 +279,28 @@ func TestChallenger2_ClientDisconnect_DetachedContext_RealSQLite(t *testing.T) {
 				<-startBarrier
 
 				w := newMockFlushRecorder()
+				streamCtx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+
 				if workerID%2 == 0 {
 					w.writeErr = errors.New("connection reset by peer")
+				} else {
+					// Deterministic mid-stream client cancellation: cancel context
+					// immediately when downstream receives the usageMetadata chunk.
+					w.onWrite = func(b []byte) {
+						cancel()
+					}
 				}
 
-				// Each stream receives usageMetadata with distinct token counts
+				// Each stream receives usageMetadata with distinct token counts, followed by an additional line
 				promptTokens := int64(100 + workerID)
 				candTokens := int64(50 + workerID)
 				totalTokens := promptTokens + candTokens
 				payload := fmt.Sprintf(
-					`data: {"usageMetadata":{"promptTokenCount":%d,"candidatesTokenCount":%d,"totalTokenCount":%d}}`+"\n",
+					`data: {"usageMetadata":{"promptTokenCount":%d,"candidatesTokenCount":%d,"totalTokenCount":%d}}`+"\n"+
+						`data: {"candidates":[{"content":{"parts":[{"text":"post-usage"}]}}]}`+"\n",
 					promptTokens, candTokens, totalTokens,
 				)
-
-				streamCtx, cancel := context.WithCancel(context.Background())
-				if workerID%2 != 0 {
-					// Cancel context after short delay
-					go func() {
-						time.Sleep(2 * time.Millisecond)
-						cancel()
-					}()
-				} else {
-					defer cancel()
-				}
 
 				_ = proxy.StreamAndInterceptSSE(
 					streamCtx,
