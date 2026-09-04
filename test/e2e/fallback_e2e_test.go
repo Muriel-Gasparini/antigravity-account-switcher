@@ -26,7 +26,7 @@ const (
 	eventTypeModelFallback = domain.EventType("model_fallback")
 
 	defaultPrimaryModel   = "gemini-2.5-pro"
-	defaultSecondaryModel = "gemini-2.5-flash"
+	defaultSecondaryModel = "claude-3-5-sonnet"
 )
 
 // --- Shared Test Helpers ---
@@ -151,8 +151,8 @@ func TestTier1_F1_ConfigSchemaAndValidation(t *testing.T) {
 		if !strings.Contains(out, "model_primary") || !strings.Contains(out, defaultPrimaryModel) {
 			t.Errorf("expected default model_primary '%s' in output: %s", defaultPrimaryModel, out)
 		}
-		if !strings.Contains(out, "model_secondary") || !strings.Contains(out, defaultSecondaryModel) {
-			t.Errorf("expected default model_secondary '%s' in output: %s", defaultSecondaryModel, out)
+		if !strings.Contains(out, "model_secondary") || !strings.Contains(out, "claude-3-5-sonnet") {
+			t.Errorf("expected default model_secondary 'claude-3-5-sonnet' in output: %s", out)
 		}
 		if !strings.Contains(out, "fallback_secondary_enabled") || !strings.Contains(out, "false") {
 			t.Errorf("expected default fallback_secondary_enabled false in output: %s", out)
@@ -190,11 +190,11 @@ func TestTier1_F1_ConfigSchemaAndValidation(t *testing.T) {
 
 	t.Run("valid_custom_config", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		out1, err1 := runCLI(t, []string{"ANTIGRAVITY_CONFIG_DIR=" + tmpDir}, "config", "set", "model_primary", "claude-3-5-sonnet")
+		out1, err1 := runCLI(t, []string{"ANTIGRAVITY_CONFIG_DIR=" + tmpDir}, "config", "set", "model_primary", "gemini-2.5-pro")
 		if err1 != nil {
 			t.Fatalf("set model_primary: %v (%s)", err1, out1)
 		}
-		out2, err2 := runCLI(t, []string{"ANTIGRAVITY_CONFIG_DIR=" + tmpDir}, "config", "set", "model_secondary", "gemini-2.5-flash")
+		out2, err2 := runCLI(t, []string{"ANTIGRAVITY_CONFIG_DIR=" + tmpDir}, "config", "set", "model_secondary", "claude-3-5-sonnet")
 		if err2 != nil {
 			t.Fatalf("set model_secondary: %v (%s)", err2, out2)
 		}
@@ -203,11 +203,11 @@ func TestTier1_F1_ConfigSchemaAndValidation(t *testing.T) {
 			t.Fatalf("set fallback_secondary_enabled: %v (%s)", err3, out3)
 		}
 		cfg := readConfigFile(t, tmpDir)
-		if cfg["model_primary"] != "claude-3-5-sonnet" {
-			t.Errorf("expected claude-3-5-sonnet, got %v", cfg["model_primary"])
+		if cfg["model_primary"] != "gemini-2.5-pro" {
+			t.Errorf("expected gemini-2.5-pro, got %v", cfg["model_primary"])
 		}
-		if cfg["model_secondary"] != "gemini-2.5-flash" {
-			t.Errorf("expected gemini-2.5-flash, got %v", cfg["model_secondary"])
+		if cfg["model_secondary"] != "claude-3-5-sonnet" {
+			t.Errorf("expected claude-3-5-sonnet, got %v", cfg["model_secondary"])
 		}
 		if cfg["fallback_secondary_enabled"] != true {
 			t.Errorf("expected fallback_secondary_enabled true, got %v", cfg["fallback_secondary_enabled"])
@@ -306,11 +306,11 @@ func TestTier1_F3_CLIConfigurationManagement(t *testing.T) {
 	})
 
 	t.Run("cli_config_set_primary", func(t *testing.T) {
-		out, err := runCLI(t, []string{"ANTIGRAVITY_CONFIG_DIR=" + tmpDir}, "config", "set", "model_primary", "gpt-4o")
+		out, err := runCLI(t, []string{"ANTIGRAVITY_CONFIG_DIR=" + tmpDir}, "config", "set", "model_primary", "gemini-2.5-pro")
 		if err != nil {
 			t.Fatalf("config set model_primary: %v (%s)", err, out)
 		}
-		if !strings.Contains(out, "Updated 'model_primary' to 'gpt-4o'") {
+		if !strings.Contains(out, "Updated 'model_primary' to 'gemini-2.5-pro'") {
 			t.Errorf("unexpected set output: %s", out)
 		}
 	})
@@ -320,17 +320,17 @@ func TestTier1_F3_CLIConfigurationManagement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("config get model_primary: %v (%s)", err, out)
 		}
-		if strings.TrimSpace(out) != "gpt-4o" {
-			t.Errorf("expected 'gpt-4o', got: %q", strings.TrimSpace(out))
+		if strings.TrimSpace(out) != "gemini-2.5-pro" {
+			t.Errorf("expected 'gemini-2.5-pro', got: %q", strings.TrimSpace(out))
 		}
 	})
 
 	t.Run("cli_config_set_secondary", func(t *testing.T) {
-		out, err := runCLI(t, []string{"ANTIGRAVITY_CONFIG_DIR=" + tmpDir}, "config", "set", "model_secondary", "gemini-2.5-flash")
+		out, err := runCLI(t, []string{"ANTIGRAVITY_CONFIG_DIR=" + tmpDir}, "config", "set", "model_secondary", "claude-3-5-sonnet")
 		if err != nil {
 			t.Fatalf("config set model_secondary: %v (%s)", err, out)
 		}
-		if !strings.Contains(out, "Updated 'model_secondary' to 'gemini-2.5-flash'") {
+		if !strings.Contains(out, "Updated 'model_secondary' to 'claude-3-5-sonnet'") {
 			t.Errorf("unexpected set output: %s", out)
 		}
 	})
@@ -340,8 +340,8 @@ func TestTier1_F3_CLIConfigurationManagement(t *testing.T) {
 		if err != nil {
 			t.Fatalf("config get model_secondary: %v (%s)", err, out)
 		}
-		if strings.TrimSpace(out) != "gemini-2.5-flash" {
-			t.Errorf("expected 'gemini-2.5-flash', got: %q", strings.TrimSpace(out))
+		if strings.TrimSpace(out) != "claude-3-5-sonnet" {
+			t.Errorf("expected 'claude-3-5-sonnet', got: %q", strings.TrimSpace(out))
 		}
 	})
 
@@ -1578,8 +1578,8 @@ func TestTier3_Combination_QuotaRestoredDuringFallback(t *testing.T) {
 	if len(reqs1) == 0 {
 		t.Fatalf("step 1: expected request received by upstream")
 	}
-	if !strings.Contains(string(reqs1[0].Body), "gemini-2.5-flash") {
-		t.Fatalf("step 1: expected request to fallback to secondary gemini-2.5-flash, got: %s", string(reqs1[0].Body))
+	if !strings.Contains(string(reqs1[0].Body), "claude-3-5-sonnet") {
+		t.Fatalf("step 1: expected request to fallback to secondary claude-3-5-sonnet, got: %s", string(reqs1[0].Body))
 	}
 
 	// 2. Replenish primary quota to 100%

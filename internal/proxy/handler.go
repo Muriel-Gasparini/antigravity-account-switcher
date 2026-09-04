@@ -702,6 +702,9 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if resp.StatusCode == http.StatusTooManyRequests {
 				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 				isExhausted = true
+			} else if (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusNotFound) && currentModel != origModel {
+				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+				isExhausted = true
 			} else if resp.StatusCode == http.StatusForbidden {
 				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 				if IsExhaustionResponse(resp.StatusCode, bodyBytes) {

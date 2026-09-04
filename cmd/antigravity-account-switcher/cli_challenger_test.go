@@ -103,7 +103,7 @@ func TestChallenger_CLI_ModelInvariantsUnderConfigSet(t *testing.T) {
 	// Step 4: Attempt to set model_primary identical to secondary
 	stdout.Reset()
 	stderr.Reset()
-	code = executeConfig([]string{"set", "model_primary", "gemini-2.5-flash"}, &stdout, &stderr)
+	code = executeConfig([]string{"set", "model_primary", "claude-3-5-sonnet"}, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("expected exit code 1 when setting identical primary model, got %d", code)
 	}

@@ -100,7 +100,7 @@ func TestTier5_Adversarial_DirectSecondaryRequest429_RotatesAccount(t *testing.T
 				receivedSwitchEvent = true
 			}
 		case <-timeout:
-			break
+			t.Fatalf("timed out waiting for AccountSwitched event")
 		}
 	}
 	if !receivedSwitchEvent {

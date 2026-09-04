@@ -64,7 +64,7 @@ func setupE2EEnvironment(t *testing.T, pollInterval time.Duration) *TestEnvironm
 		broadcaster,
 		eventRepo,
 		proxy.WithQuotaRepository(quotaRepo),
-		proxy.WithModelFallback("gemini-2.5-pro", "gemini-2.5-flash", true),
+		proxy.WithModelFallback("gemini-2.5-pro", "claude-3-5-sonnet", true),
 	)
 
 	proxyHandler, err := proxy.NewProxyHandler(

@@ -19,7 +19,7 @@ const (
 	ConfigFileName                  = "config.json"
 	DefaultDBFileName               = "accounts.db"
 	DefaultModelPrimary             = "gemini-2.5-pro"
-	DefaultModelSecondary           = "gemini-2.5-flash"
+	DefaultModelSecondary           = "claude-3-5-sonnet"
 	DefaultFallbackSecondaryEnabled = false
 )
 
@@ -201,8 +201,31 @@ func (c *Config) Validate() error {
 		if strings.EqualFold(primary, secondary) {
 			return fmt.Errorf("model_primary and model_secondary cannot be identical (%q)", c.ModelPrimary)
 		}
+
+		primaryCat := categorizeModelSimple(primary)
+		secondaryCat := categorizeModelSimple(secondary)
+
+		if primaryCat != "unknown" && secondaryCat != "unknown" && primaryCat == secondaryCat {
+			return fmt.Errorf("model_primary and model_secondary must belong to different providers (Gemini vs Claude/GPT), both are %s", primaryCat)
+		}
 	}
 	return nil
+}
+
+// categorizeModelSimple is a lightweight categorization for validation purposes.
+func categorizeModelSimple(model string) string {
+	lower := strings.ToLower(model)
+	if strings.Contains(lower, "claude") || strings.Contains(lower, "gpt") ||
+		strings.Contains(lower, "sonnet") || strings.Contains(lower, "opus") ||
+		strings.Contains(lower, "haiku") || strings.Contains(lower, "3p") ||
+		lower == "o1" || lower == "o3" || strings.HasPrefix(lower, "o1-") || strings.HasPrefix(lower, "o3-") {
+		return "claude_gpt"
+	}
+	if strings.Contains(lower, "gemini") || strings.Contains(lower, "gemma") ||
+		strings.Contains(lower, "flash") || strings.Contains(lower, "pro") {
+		return "gemini"
+	}
+	return "unknown"
 }
 
 // CandidateAntigravityPaths returns standard probing locations across Linux and macOS.

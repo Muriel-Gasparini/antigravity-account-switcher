@@ -80,7 +80,7 @@ func TestCLI_Config_List(t *testing.T) {
 		"model_secondary:",
 		"fallback_secondary_enabled:",
 		"gemini-2.5-pro",
-		"gemini-2.5-flash",
+		"claude-3-5-sonnet",
 		"false",
 	}
 
@@ -101,6 +101,7 @@ func TestCLI_Config_List(t *testing.T) {
 	// Mutate config and verify updated listing
 	captureStdout(func() {
 		runConfig([]string{"set", "model_primary", "claude-3-7-sonnet"})
+		runConfig([]string{"set", "model_secondary", "gemini-2.5-flash"})
 		runConfig([]string{"set", "fallback_secondary_enabled", "true"})
 	})
 
@@ -153,6 +154,7 @@ func TestCLI_Config_Set(t *testing.T) {
 	// 1. Set model_primary
 	outPrimary := captureStdout(func() {
 		runConfig([]string{"set", "model_primary", "claude-3-7-sonnet"})
+		runConfig([]string{"set", "model_secondary", "gemini-2.5-flash"})
 	})
 	if !strings.Contains(outPrimary, "Updated 'model_primary' to 'claude-3-7-sonnet'") {
 		t.Errorf("expected confirmation output, got: %s", outPrimary)

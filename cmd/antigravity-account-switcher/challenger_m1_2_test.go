@@ -357,7 +357,7 @@ func TestChallenger_DefaultBehaviorPreservation(t *testing.T) {
 
 		// 4. Empty primary
 		cfg.ModelPrimary = "  "
-		cfg.ModelSecondary = "gemini-2.5-flash"
+		cfg.ModelSecondary = "claude-3-5-sonnet"
 		if err := cfg.Validate(); err == nil {
 			t.Errorf("Validate() MUST reject empty primary model when fallback is enabled")
 		}
@@ -371,7 +371,7 @@ func TestChallenger_DefaultBehaviorPreservation(t *testing.T) {
 
 		// 6. Distinct valid models
 		cfg.ModelPrimary = "gemini-2.5-pro"
-		cfg.ModelSecondary = "gemini-2.5-flash"
+		cfg.ModelSecondary = "claude-3-5-sonnet"
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("Validate() should accept valid distinct models: %v", err)
 		}
@@ -401,7 +401,7 @@ func TestChallenger_SubprocessBinaryExecution(t *testing.T) {
 		outputStr := string(out)
 		expectedKeys := []string{
 			"model_primary:              gemini-2.5-pro",
-			"model_secondary:            gemini-2.5-flash",
+			"model_secondary:            claude-3-5-sonnet",
 			"fallback_secondary_enabled: false",
 		}
 		for _, ek := range expectedKeys {
@@ -419,6 +419,12 @@ func TestChallenger_SubprocessBinaryExecution(t *testing.T) {
 		}
 
 		// 1. Set model_primary
+		cmdSetS := exec.Command(binPath, "config", "set", "model_secondary", "gemini-2.5-flash")
+		cmdSetS.Env = env
+		if out, err := cmdSetS.CombinedOutput(); err != nil {
+			t.Fatalf("set model_secondary failed: %v, out:\n%s", err, out)
+		}
+
 		cmdSetP := exec.Command(binPath, "config", "set", "model_primary", "claude-3-7-sonnet")
 		cmdSetP.Env = env
 		if out, err := cmdSetP.CombinedOutput(); err != nil {

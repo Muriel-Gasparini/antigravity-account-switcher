@@ -58,7 +58,7 @@ func TestChallenger_Config_ModelUnicodeAndExtremeStrings(t *testing.T) {
 		{
 			name:      "ascii models",
 			primary:   "gemini-2.5-pro",
-			secondary: "gemini-2.5-flash",
+			secondary: "claude-3-5-sonnet",
 			valid:     true,
 		},
 		{
@@ -157,7 +157,7 @@ func TestChallenger_Config_WhitespaceAndEmptyVariations(t *testing.T) {
 			cfg := DefaultConfig()
 			cfg.FallbackSecondaryEnabled = true
 			cfg.ModelPrimary = ws
-			cfg.ModelSecondary = "gemini-2.5-flash"
+			cfg.ModelSecondary = "claude-3-5-sonnet"
 
 			if err := cfg.Validate(); err == nil {
 				t.Errorf("expected error for whitespace-only model_primary (%q), got nil", ws)

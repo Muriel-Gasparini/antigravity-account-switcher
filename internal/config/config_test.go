@@ -36,8 +36,8 @@ func TestConfig_ModelDefaults(t *testing.T) {
 	if DefaultModelPrimary != "gemini-2.5-pro" {
 		t.Errorf("expected DefaultModelPrimary to be gemini-2.5-pro, got %s", DefaultModelPrimary)
 	}
-	if DefaultModelSecondary != "gemini-2.5-flash" {
-		t.Errorf("expected DefaultModelSecondary to be gemini-2.5-flash, got %s", DefaultModelSecondary)
+	if DefaultModelSecondary != "claude-3-5-sonnet" {
+		t.Errorf("expected DefaultModelSecondary to be claude-3-5-sonnet, got %s", DefaultModelSecondary)
 	}
 	if DefaultFallbackSecondaryEnabled != false {
 		t.Errorf("expected DefaultFallbackSecondaryEnabled to be false, got %t", DefaultFallbackSecondaryEnabled)
@@ -56,7 +56,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 		QuotaInterval:            "30s",
 		OpenBrowser:              true,
 		ModelPrimary:             "claude-3-7-sonnet",
-		ModelSecondary:           "gemini-2.5-flash",
+		ModelSecondary:           "claude-3-5-sonnet",
 		FallbackSecondaryEnabled: true,
 	}
 
@@ -78,8 +78,8 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	if loaded.ModelPrimary != "claude-3-7-sonnet" {
 		t.Errorf("expected ModelPrimary 'claude-3-7-sonnet', got %s", loaded.ModelPrimary)
 	}
-	if loaded.ModelSecondary != "gemini-2.5-flash" {
-		t.Errorf("expected ModelSecondary 'gemini-2.5-flash', got %s", loaded.ModelSecondary)
+	if loaded.ModelSecondary != "claude-3-5-sonnet" {
+		t.Errorf("expected ModelSecondary 'claude-3-5-sonnet', got %s", loaded.ModelSecondary)
 	}
 	if !loaded.FallbackSecondaryEnabled {
 		t.Errorf("expected FallbackSecondaryEnabled true, got %t", loaded.FallbackSecondaryEnabled)
@@ -100,7 +100,7 @@ func TestConfig_JSONSerialization_RoundTrip(t *testing.T) {
 		QuotaInterval:            "5m",
 		OpenBrowser:              false,
 		ModelPrimary:             "claude-3-5-sonnet",
-		ModelSecondary:           "gemini-2.5-flash",
+		ModelSecondary:           "claude-3-5-sonnet",
 		FallbackSecondaryEnabled: true,
 	}
 
@@ -113,7 +113,7 @@ func TestConfig_JSONSerialization_RoundTrip(t *testing.T) {
 	if !strings.Contains(rawJSON, `"model_primary":"claude-3-5-sonnet"`) {
 		t.Errorf("expected json to contain model_primary, got %s", rawJSON)
 	}
-	if !strings.Contains(rawJSON, `"model_secondary":"gemini-2.5-flash"`) {
+	if !strings.Contains(rawJSON, `"model_secondary":"claude-3-5-sonnet"`) {
 		t.Errorf("expected json to contain model_secondary, got %s", rawJSON)
 	}
 	if !strings.Contains(rawJSON, `"fallback_secondary_enabled":true`) {
@@ -337,7 +337,7 @@ func TestConfig_Validate(t *testing.T) {
 			modify: func(c *Config) {
 				c.FallbackSecondaryEnabled = true
 				c.ModelPrimary = "gemini-2.5-pro"
-				c.ModelSecondary = "gemini-2.5-flash"
+				c.ModelSecondary = "claude-3-5-sonnet"
 			},
 			expectErr: false,
 		},
@@ -346,7 +346,7 @@ func TestConfig_Validate(t *testing.T) {
 			modify: func(c *Config) {
 				c.FallbackSecondaryEnabled = true
 				c.ModelPrimary = ""
-				c.ModelSecondary = "gemini-2.5-flash"
+				c.ModelSecondary = "claude-3-5-sonnet"
 			},
 			expectErr: true,
 			errSubstr: "model_primary cannot be empty",
@@ -356,7 +356,7 @@ func TestConfig_Validate(t *testing.T) {
 			modify: func(c *Config) {
 				c.FallbackSecondaryEnabled = true
 				c.ModelPrimary = "   "
-				c.ModelSecondary = "gemini-2.5-flash"
+				c.ModelSecondary = "claude-3-5-sonnet"
 			},
 			expectErr: true,
 			errSubstr: "model_primary cannot be empty",
