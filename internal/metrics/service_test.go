@@ -36,7 +36,7 @@ func (m *mockAccountRepo) List(ctx context.Context) ([]*domain.Account, error) {
 	}
 	return m.accounts, nil
 }
-func (m *mockAccountRepo) SetActive(ctx context.Context, id string) error                 { return nil }
+func (m *mockAccountRepo) SetActive(ctx context.Context, id string) error { return nil }
 func (m *mockAccountRepo) UpdateStatus(ctx context.Context, id string, status domain.AccountStatus) error {
 	return nil
 }
@@ -52,17 +52,20 @@ func (m *mockAccountRepo) GetNextAvailable(ctx context.Context, excludeID string
 }
 
 type mockMetricsRepo struct {
-	summaryRes         *domain.AggregatedMetrics
-	summariesRes       map[string]*domain.AggregatedMetrics
-	dailyHistoryRes    []*domain.DailyTokenUsage
-	recorded           []*domain.TokenMetric
-	summaryCalls       []struct{ accID, period string }
-	summariesCalls     []string
-	dailyHistoryCalls  []struct{ accID string; days int }
-	recordErr          error
-	summaryErr         error
-	summariesErr       error
-	dailyHistoryErr    error
+	summaryRes        *domain.AggregatedMetrics
+	summariesRes      map[string]*domain.AggregatedMetrics
+	dailyHistoryRes   []*domain.DailyTokenUsage
+	recorded          []*domain.TokenMetric
+	summaryCalls      []struct{ accID, period string }
+	summariesCalls    []string
+	dailyHistoryCalls []struct {
+		accID string
+		days  int
+	}
+	recordErr       error
+	summaryErr      error
+	summariesErr    error
+	dailyHistoryErr error
 }
 
 func (m *mockMetricsRepo) Record(ctx context.Context, metric *domain.TokenMetric) error {
@@ -93,7 +96,10 @@ func (m *mockMetricsRepo) GetAccountSummaries(ctx context.Context, period string
 }
 
 func (m *mockMetricsRepo) GetDailyHistory(ctx context.Context, accountID string, days int) ([]*domain.DailyTokenUsage, error) {
-	m.dailyHistoryCalls = append(m.dailyHistoryCalls, struct{ accID string; days int }{accountID, days})
+	m.dailyHistoryCalls = append(m.dailyHistoryCalls, struct {
+		accID string
+		days  int
+	}{accountID, days})
 	if m.dailyHistoryErr != nil {
 		return nil, m.dailyHistoryErr
 	}

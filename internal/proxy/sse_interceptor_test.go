@@ -83,13 +83,13 @@ func (m *mockMetricsRepo) getRecords() []*domain.TokenMetric {
 
 func TestSSEInterceptor_DualSchemaParsing(t *testing.T) {
 	tests := []struct {
-		name                 string
-		payload              string
-		expectedPrompt       int64
-		expectedCandidates   int64
-		expectedTotal        int64
-		expectedCached       int64
-		expectedThoughts     int64
+		name               string
+		payload            string
+		expectedPrompt     int64
+		expectedCandidates int64
+		expectedTotal      int64
+		expectedCached     int64
+		expectedThoughts   int64
 	}{
 		{
 			name: "nested response.usageMetadata (Google Cloud Code PA format)",

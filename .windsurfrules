@@ -1,0 +1,10 @@
+# Windsurf Rules for Antigravity Account Switcher
+
+All architectural specifications, runtime insights regarding Google Antigravity 2.0, and testing requirements are centralized in `AGENTS.md`.
+
+## Key Instructions for Cascade
+- Review `AGENTS.md` before making architectural or cross-package changes.
+- Ensure all Go code follows `CGO_ENABLED=0` compatibility (pure Go SQLite via `modernc.org/sqlite`).
+- Format all Go files with `make fmt`.
+- Validate zero lint warnings with `make lint` and zero data races with `make test-race`.
+- Use Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`).

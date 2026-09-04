@@ -238,4 +238,3 @@ func (r *MetricsRepository) GetDailyHistoryInLocation(ctx context.Context, accou
 
 	return history, rows.Err()
 }
-

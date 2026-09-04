@@ -233,4 +233,3 @@ func TestWrap_InjectsAppImageEnv(t *testing.T) {
 		t.Errorf("expected APPIMAGE to contain 'sh', got %q", appImageVal)
 	}
 }
-

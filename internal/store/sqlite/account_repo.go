@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
+	"github.com/google/uuid"
 )
 
 // AccountRepository implements domain.AccountRepository backed by SQLite.
