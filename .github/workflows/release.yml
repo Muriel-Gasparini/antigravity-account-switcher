@@ -164,14 +164,36 @@ jobs:
             }
           }')
 
-          CANDIDATE_MODELS=("gemini-2.5-flash" "gemini-1.5-flash" "gemini-2.0-flash")
-          for MODEL in "${CANDIDATE_MODELS[@]}"; do
+          # Step 1: Attempt dynamic model discovery for this specific API key
+          DETECTED_MODELS=()
+          MODELS_RESP=$(curl -s --connect-timeout 5 --max-time 10 \
+            "https://generativelanguage.googleapis.com/v1beta/models" \
+            -H "x-goog-api-key: ${GEMINI_API_KEY}" 2>/dev/null || true)
+
+          if [ -n "$MODELS_RESP" ]; then
+            while IFS= read -r m; do
+              [ -n "$m" ] && DETECTED_MODELS+=("$m")
+            done < <(echo "$MODELS_RESP" | jq -r '.models[]? | select(.supportedGenerationMethods[]? == "generateContent") | .name' | grep -E "flash|pro" | sed 's|^models/||' 2>/dev/null || true)
+          fi
+
+          # Build candidates list: dynamically discovered models first, then common standard fallbacks
+          CANDIDATE_MODELS=("${DETECTED_MODELS[@]}" "gemini-1.5-flash" "gemini-2.0-flash" "gemini-1.5-pro")
+
+          # De-duplicate candidates while preserving order
+          UNIQUE_MODELS=()
+          for m in "${CANDIDATE_MODELS[@]}"; do
+            [[ " ${UNIQUE_MODELS[*]} " =~ " ${m} " ]] || UNIQUE_MODELS+=("$m")
+          done
+
+          echo "Candidate models to try: ${UNIQUE_MODELS[*]}"
+
+          for MODEL in "${UNIQUE_MODELS[@]}"; do
             echo "Attempting to generate release notes with ${MODEL}..."
-            RESPONSE=$(curl -s --connect-timeout 10 --max-time 30 -w "\n%{http_code}" -X POST \
+            RESPONSE=$(curl -s --connect-timeout 5 --max-time 15 -w "\n%{http_code}" -X POST \
               "https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent" \
               -H "Content-Type: application/json" \
               -H "x-goog-api-key: ${GEMINI_API_KEY}" \
-              -d "$PAYLOAD")
+              -d "$PAYLOAD" 2>/dev/null || echo -e "\n000")
 
             HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
             BODY=$(echo "$RESPONSE" | sed '$d')
