@@ -73,6 +73,24 @@
     return isoDateStr;
   }
 
+  function getLocalDateStr(d = new Date()) {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function getClientTimezoneInfo() {
+    let tz = '';
+    try {
+      tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    } catch (_) {
+      tz = '';
+    }
+    const offsetMinutes = -new Date().getTimezoneOffset();
+    return { tz, offsetMinutes };
+  }
+
   // Calculate live countdown timer from reset time string
   function getRemainingSeconds(resetTimeStr) {
     if (!resetTimeStr) return 0;
@@ -531,7 +549,12 @@
 
   async function fetchMetrics() {
     try {
-      const res = await fetch(`/api/metrics?period=${encodeURIComponent(currentPeriod)}`);
+      const tzInfo = getClientTimezoneInfo();
+      const res = await fetch(
+        `/api/metrics?period=${encodeURIComponent(currentPeriod)}` +
+        `&tz=${encodeURIComponent(tzInfo.tz)}` +
+        `&tz_offset=${encodeURIComponent(tzInfo.offsetMinutes)}`
+      );
       if (!res.ok) return;
       const data = await res.json();
 
@@ -629,7 +652,7 @@
     if (gridMaxLabel) gridMaxLabel.textContent = formatCompactNumber(maxTokens);
     if (gridMidLabel) gridMidLabel.textContent = formatCompactNumber(Math.round(maxTokens / 2));
 
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = getLocalDateStr();
 
     // Render columns
     timeline.forEach((item, index) => {
@@ -804,7 +827,9 @@
 
   function resetInspector() {
     if (inspectorDate && inspectorData) {
-      inspectorDate.textContent = '14-Day Daily Usage Trend';
+      const tzInfo = getClientTimezoneInfo();
+      const tzLabel = tzInfo.tz ? ` • ${tzInfo.tz}` : '';
+      inspectorDate.textContent = `14-Day Daily Usage Trend${tzLabel}`;
       inspectorData.innerHTML = `
         <span class="text-xs text-muted">Hover or use arrow keys to inspect daily breakdown</span>
       `;

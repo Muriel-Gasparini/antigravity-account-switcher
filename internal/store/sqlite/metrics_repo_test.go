@@ -148,7 +148,7 @@ func TestMetricsRepository_GetDailyHistory(t *testing.T) {
 	_ = accRepo.Create(ctx, &domain.Account{ID: "acc-hist", Email: "hist@example.com", RefreshToken: "rt"})
 
 	now := time.Now().UTC()
-	// Insert 2 records today, 1 record yesterday
+	// Insert 2 records today (guaranteed same calendar day), 1 record yesterday
 	_ = metricsRepo.Record(ctx, &domain.TokenMetric{
 		AccountID:        "acc-hist",
 		PromptTokens:     50,
@@ -159,13 +159,13 @@ func TestMetricsRepository_GetDailyHistory(t *testing.T) {
 		AccountID:        "acc-hist",
 		PromptTokens:     100,
 		CandidatesTokens: 50,
-		Timestamp:        now.Add(-2 * time.Hour),
+		Timestamp:        now,
 	})
 	_ = metricsRepo.Record(ctx, &domain.TokenMetric{
 		AccountID:        "acc-hist",
 		PromptTokens:     200,
 		CandidatesTokens: 100,
-		Timestamp:        now.Add(-26 * time.Hour),
+		Timestamp:        now.AddDate(0, 0, -1),
 	})
 
 	history, err := metricsRepo.GetDailyHistory(ctx, "acc-hist", 7)
@@ -181,5 +181,58 @@ func TestMetricsRepository_GetDailyHistory(t *testing.T) {
 	today := history[len(history)-1]
 	if today.RequestCount != 2 || today.TotalTokens != 225 {
 		t.Errorf("expected today 2 requests, 225 tokens; got requests=%d, tokens=%d", today.RequestCount, today.TotalTokens)
+	}
+}
+
+func TestMetricsRepository_GetDailyHistoryInLocation(t *testing.T) {
+	_, accRepo, _, metricsRepo, _ := setupTestStore(t)
+	ctx := context.Background()
+
+	_ = accRepo.Create(ctx, &domain.Account{ID: "acc-tz", Email: "tz@example.com", RefreshToken: "rt"})
+
+	// Scenario: A request happens at 00:05 UTC on Sept 4.
+	// In UTC: Sept 4.
+	// In Brazil (UTC-3): Sept 3, 21:05.
+	tUTC := time.Date(2026, 9, 4, 0, 5, 0, 0, time.UTC)
+	_ = metricsRepo.Record(ctx, &domain.TokenMetric{
+		AccountID:        "acc-tz",
+		PromptTokens:     500,
+		CandidatesTokens: 200,
+		TotalTokens:      700,
+		Timestamp:        tUTC,
+	})
+
+	spLoc := time.FixedZone("America/Sao_Paulo", -3*3600)
+
+	// In America/Sao_Paulo (UTC-3), strftime with -3 hours must group this under 2026-09-03
+	spHistory, err := metricsRepo.GetDailyHistoryInLocation(ctx, "acc-tz", 7, spLoc)
+	if err != nil {
+		t.Fatalf("GetDailyHistoryInLocation(spLoc) failed: %v", err)
+	}
+	if len(spHistory) == 0 {
+		t.Fatalf("expected spHistory to have at least 1 record")
+	}
+	lastItemSP := spHistory[len(spHistory)-1]
+	if lastItemSP.Date != "2026-09-03" {
+		t.Errorf("expected date in SP timezone to be 2026-09-03, got %q", lastItemSP.Date)
+	}
+	if lastItemSP.TotalTokens != 700 {
+		t.Errorf("expected 700 tokens in SP, got %d", lastItemSP.TotalTokens)
+	}
+
+	// In UTC, strftime must group this under 2026-09-04
+	utcHistory, err := metricsRepo.GetDailyHistoryInLocation(ctx, "acc-tz", 7, time.UTC)
+	if err != nil {
+		t.Fatalf("GetDailyHistoryInLocation(UTC) failed: %v", err)
+	}
+	if len(utcHistory) == 0 {
+		t.Fatalf("expected utcHistory to have at least 1 record")
+	}
+	lastItemUTC := utcHistory[len(utcHistory)-1]
+	if lastItemUTC.Date != "2026-09-04" {
+		t.Errorf("expected date in UTC to be 2026-09-04, got %q", lastItemUTC.Date)
+	}
+	if lastItemUTC.TotalTokens != 700 {
+		t.Errorf("expected 700 tokens in UTC, got %d", lastItemUTC.TotalTokens)
 	}
 }

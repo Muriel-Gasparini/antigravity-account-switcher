@@ -325,6 +325,70 @@ func TestService_GetDashboardPayload(t *testing.T) {
 	}
 }
 
+func TestService_GetDailyUsageInLocation_Timezone(t *testing.T) {
+	locSP := time.FixedZone("America/Sao_Paulo", -3*3600)
+	nowSP := time.Now().In(locSP)
+	todaySP := nowSP.Format("2006-01-02")
+
+	metricsRepo := &mockMetricsRepo{
+		dailyHistoryRes: []*domain.DailyTokenUsage{
+			{Date: todaySP, TotalTokens: 420},
+		},
+	}
+	svc := NewService(metricsRepo, nil)
+
+	filled, err := svc.GetDailyUsageInLocation(context.Background(), "", 7, true, locSP)
+	if err != nil {
+		t.Fatalf("GetDailyUsageInLocation failed: %v", err)
+	}
+
+	if len(filled) != 7 {
+		t.Fatalf("expected 7 entries, got %d", len(filled))
+	}
+
+	// Last entry must match today in the specified timezone
+	last := filled[len(filled)-1]
+	if last.Date != todaySP {
+		t.Errorf("expected last entry date to be %s, got %s", todaySP, last.Date)
+	}
+	if last.TotalTokens != 420 {
+		t.Errorf("expected 420 tokens, got %d", last.TotalTokens)
+	}
+}
+
+func TestService_GetDashboardPayloadWithLocation(t *testing.T) {
+	accRepo := &mockAccountRepo{
+		accounts: []*domain.Account{
+			{ID: "acc-1", Email: "primary@example.com", Status: domain.AccountStatusActive, IsActive: true},
+		},
+	}
+	locSP := time.FixedZone("America/Sao_Paulo", -3*3600)
+	todaySP := time.Now().In(locSP).Format("2006-01-02")
+
+	metricsRepo := &mockMetricsRepo{
+		summaryRes:   &domain.AggregatedMetrics{TotalTokens: 800},
+		summariesRes: map[string]*domain.AggregatedMetrics{"acc-1": {TotalTokens: 800}},
+		dailyHistoryRes: []*domain.DailyTokenUsage{
+			{Date: todaySP, TotalTokens: 800},
+		},
+	}
+
+	svc := NewService(metricsRepo, accRepo)
+
+	payload, err := svc.GetDashboardPayloadWithLocation(context.Background(), 14, locSP)
+	if err != nil {
+		t.Fatalf("GetDashboardPayloadWithLocation failed: %v", err)
+	}
+
+	if len(payload.Timeline) != 14 {
+		t.Fatalf("expected 14 timeline days, got %d", len(payload.Timeline))
+	}
+	last := payload.Timeline[len(payload.Timeline)-1]
+	if last.Date != todaySP {
+		t.Errorf("expected last timeline date %s, got %s", todaySP, last.Date)
+	}
+}
+
 func TestService_Record(t *testing.T) {
 	metricsRepo := &mockMetricsRepo{}
 	svc := NewService(metricsRepo, nil)

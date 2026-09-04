@@ -380,6 +380,32 @@ func TestServer_API_Metrics(t *testing.T) {
 	if payload.Summary.AllTime.TotalTokens != 150 {
 		t.Errorf("expected 150 all time tokens, got %d", payload.Summary.AllTime.TotalTokens)
 	}
+
+	// Test with tz and tz_offset parameters (e.g. America/Sao_Paulo)
+	respTZ, err := http.Get(ts.URL + "/api/metrics?tz=America/Sao_Paulo&tz_offset=-180")
+	if err != nil {
+		t.Fatalf("GET /api/metrics?tz=...: %v", err)
+	}
+	defer respTZ.Body.Close()
+
+	if respTZ.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", respTZ.StatusCode)
+	}
+
+	var payloadTZ domain.MetricsDashboardPayload
+	if err := json.NewDecoder(respTZ.Body).Decode(&payloadTZ); err != nil {
+		t.Fatalf("decode tz metrics payload: %v", err)
+	}
+
+	locSP, _ := time.LoadLocation("America/Sao_Paulo")
+	expectedTodaySP := time.Now().In(locSP).Format("2006-01-02")
+	if len(payloadTZ.Timeline) != 14 {
+		t.Fatalf("expected 14 timeline items, got %d", len(payloadTZ.Timeline))
+	}
+	lastItem := payloadTZ.Timeline[len(payloadTZ.Timeline)-1]
+	if lastItem.Date != expectedTodaySP {
+		t.Errorf("expected last timeline item to be %s (SP today), got %s", expectedTodaySP, lastItem.Date)
+	}
 }
 
 func TestServer_API_Events_SSE(t *testing.T) {
