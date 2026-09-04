@@ -108,7 +108,7 @@ func runServe(args []string) {
 	if cfg != nil && cfg.Port > 0 {
 		defaultPort = cfg.Port
 	}
-	defaultPollInterval := 60 * time.Second
+	defaultPollInterval := quota.DefaultPollInterval
 	if cfg != nil && cfg.QuotaInterval != "" {
 		if d, err := time.ParseDuration(cfg.QuotaInterval); err == nil {
 			defaultPollInterval = d
@@ -240,7 +240,7 @@ func runServe(args []string) {
 
 func runWrap(args []string) {
 	cfg, _ := config.Load()
-	defaultPollInterval := 60 * time.Second
+	defaultPollInterval := quota.DefaultPollInterval
 	if cfg != nil && cfg.QuotaInterval != "" {
 		if d, err := time.ParseDuration(cfg.QuotaInterval); err == nil {
 			defaultPollInterval = d
@@ -460,7 +460,7 @@ func runStatus(args []string) {
 func runLaunch(args []string) {
 	cfg, _ := config.Load()
 
-	defaultPollInterval := 60 * time.Second
+	defaultPollInterval := quota.DefaultPollInterval
 	if cfg != nil && cfg.QuotaInterval != "" {
 		if d, err := time.ParseDuration(cfg.QuotaInterval); err == nil {
 			defaultPollInterval = d

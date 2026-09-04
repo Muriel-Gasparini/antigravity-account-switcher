@@ -12,7 +12,7 @@ import (
 const (
 	DefaultPort        = 8080
 	DefaultUpstreamURL = "https://daily-cloudcode-pa.googleapis.com"
-	DefaultInterval    = "60s"
+	DefaultInterval    = "5m"
 	ConfigFileName     = "config.json"
 	DefaultDBFileName  = "accounts.db"
 )
