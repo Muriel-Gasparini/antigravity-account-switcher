@@ -656,6 +656,22 @@ func (a *APIHandler) updateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Preserve existing non-model fields from disk config
+	if diskCfg, err := config.Load(); err == nil && diskCfg != nil {
+		if currentCfg.AntigravityBin == "" && diskCfg.AntigravityBin != "" {
+			currentCfg.AntigravityBin = diskCfg.AntigravityBin
+		}
+		if currentCfg.DBPath == "" && diskCfg.DBPath != "" {
+			currentCfg.DBPath = diskCfg.DBPath
+		}
+		if currentCfg.UpstreamURL == "" && diskCfg.UpstreamURL != "" {
+			currentCfg.UpstreamURL = diskCfg.UpstreamURL
+		}
+		if currentCfg.QuotaInterval == "" && diskCfg.QuotaInterval != "" {
+			currentCfg.QuotaInterval = diskCfg.QuotaInterval
+		}
+	}
+
 	_ = config.Save(currentCfg)
 
 	if a.fallbackConfigSetter != nil {

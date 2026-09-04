@@ -214,7 +214,6 @@ func CandidateAntigravityPaths() []string {
 		candidates = append(candidates,
 			// 1. Standard XDG user application directories (Recommended, no sudo)
 			filepath.Join(home, ".local", "bin", "antigravity"),
-			filepath.Join(home, ".local", "bin", "agy"),
 			filepath.Join(home, ".local", "share", "antigravity", "antigravity"),
 			filepath.Join(home, ".local", "share", "antigravity", "Antigravity-x64", "antigravity"),
 			filepath.Join(home, ".local", "share", "Antigravity", "antigravity"),
@@ -236,7 +235,6 @@ func CandidateAntigravityPaths() []string {
 	// 4. System-wide FHS locations (Installed via sudo into /opt or /usr/local/bin)
 	candidates = append(candidates,
 		"/usr/local/bin/antigravity",
-		"/usr/local/bin/agy",
 		"/opt/antigravity/antigravity",
 		"/opt/antigravity/Antigravity-x64/antigravity",
 		"/opt/Antigravity/antigravity",

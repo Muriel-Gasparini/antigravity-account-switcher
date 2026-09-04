@@ -22,6 +22,7 @@ import (
 
 func setupTestWeb(t *testing.T) (*sqlite.DB, domain.AccountRepository, domain.QuotaRepository, domain.MetricsRepository, *metrics.Service, *proxy.Broadcaster, domain.EventRepository) {
 	t.Helper()
+	t.Setenv("ANTIGRAVITY_CONFIG_DIR", t.TempDir())
 	db, err := sqlite.Open(":memory:")
 	if err != nil {
 		t.Fatalf("failed to open sqlite in memory: %v", err)
