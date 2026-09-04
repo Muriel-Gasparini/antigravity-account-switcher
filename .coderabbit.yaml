@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "pt-BR"
+tone_instructions: "Seja conciso, direto e técnico. Foco em boas práticas de Go (idiomatic Go), segurança em concorrência, ausência de deadlocks/race conditions, tratamento correto de context cancellation e integridade de SQLite."
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - "main"
+  tools:
+    golangci-lint:
+      enabled: true
+  path_filters:
+    - "!**/*.min.js"
+    - "!internal/web/dist/**"
+    - "!test/mocks/**"
+
+chat:
+  auto_reply: true
