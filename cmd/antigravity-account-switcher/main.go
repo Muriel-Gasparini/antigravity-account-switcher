@@ -153,8 +153,12 @@ func runServe(args []string) {
 	cfg.ModelSecondary = *modelSecondary
 
 	if err := cfg.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
-		os.Exit(1)
+		if strings.Contains(err.Error(), "cannot be identical") || strings.Contains(err.Error(), "different providers") {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	fmt.Printf("Initializing Antigravity Account Switcher v%s...\n", Version)
@@ -342,8 +346,12 @@ func runWrap(args []string) {
 	cfg.ModelSecondary = *modelSecondary
 
 	if err := cfg.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
-		os.Exit(1)
+		if strings.Contains(err.Error(), "cannot be identical") || strings.Contains(err.Error(), "different providers") {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	if len(cmdToRun) == 0 {
@@ -579,8 +587,12 @@ func runLaunch(args []string) {
 	cfg.ModelSecondary = *modelSecondary
 
 	if err := cfg.Validate(); err != nil {
-		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
-		os.Exit(1)
+		if strings.Contains(err.Error(), "cannot be identical") || strings.Contains(err.Error(), "different providers") {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	antigravityBin, err := config.ResolveAntigravityBin(*binFlag)
@@ -768,8 +780,12 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 		}
 
 		if err := cfg.Validate(); err != nil {
-			fmt.Fprintf(stderr, "Configuration validation failed: %v\n", err)
-			return 1
+			if strings.Contains(err.Error(), "cannot be identical") || strings.Contains(err.Error(), "different providers") {
+				fmt.Fprintf(stderr, "Warning: %v\n", err)
+			} else {
+				fmt.Fprintf(stderr, "Configuration validation failed: %v\n", err)
+				return 1
+			}
 		}
 
 		if err := config.Save(cfg); err != nil {
