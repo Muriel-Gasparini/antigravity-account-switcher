@@ -548,6 +548,25 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	currentQuery := origQuery
 	currentBody := origBody
 
+	// Force primary model configured in the dashboard (source of truth) unless client already requests secondary
+	if isCloudCode && !isPassThrough && h.failoverEngine != nil {
+		h.failoverEngine.mu.RLock()
+		primary := h.failoverEngine.modelPrimary
+		secondary := h.failoverEngine.modelSecondary
+		h.failoverEngine.mu.RUnlock()
+
+		if primary != "" && origModel != "" &&
+			NormalizeModelName(origModel) != NormalizeModelName(primary) &&
+			(secondary == "" || NormalizeModelName(origModel) != NormalizeModelName(secondary)) {
+			buffered = h.rewriteRequestModel(r, buffered, primary)
+			origModel = primary
+			currentModel = primary
+			currentPath = r.URL.Path
+			currentQuery = r.URL.RawQuery
+			currentBody = buffered.Bytes()
+		}
+	}
+
 	// Predictive fallback check before initial upstream dispatch
 	if isCloudCode && !isPassThrough && currentAcc != nil && origModel != "" {
 		newBuffered, targetModel, rewritten := h.applyPredictiveFallback(ctx, currentAcc, r, buffered)
@@ -700,9 +719,6 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			isExhausted := false
 
 			if resp.StatusCode == http.StatusTooManyRequests {
-				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-				isExhausted = true
-			} else if (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusNotFound) && currentModel != origModel {
 				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 				isExhausted = true
 			} else if resp.StatusCode == http.StatusForbidden {

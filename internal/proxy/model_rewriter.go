@@ -322,8 +322,41 @@ func ExtractModelFromJSON(body []byte) (string, error) {
 	return unsafe.String(unsafe.SliceData(match), len(match)), nil
 }
 
-// RewriteModelInBody creates a new byte slice replacing the root-level model with targetModel.
-// Guarantees immutability of the input body slice and performs exactly 1 slice allocation.
+// ModelPlaceholderMap maps standard Antigravity model IDs to their internal model_enum placeholders.
+var ModelPlaceholderMap = map[string]string{
+	"gemini-3.8-flash-high":    "MODEL_PLACEHOLDER_M318",
+	"gemini-3.8-flash-medium":  "MODEL_PLACEHOLDER_M319",
+	"gemini-3.8-flash-low":     "MODEL_PLACEHOLDER_M320",
+	"gemini-3.8-flash-tiered":  "MODEL_PLACEHOLDER_M322",
+	"gemini-3.7-flash-high":    "MODEL_PLACEHOLDER_M298",
+	"gemini-3.7-flash-medium":  "MODEL_PLACEHOLDER_M299",
+	"gemini-3.7-flash-low":     "MODEL_PLACEHOLDER_M300",
+	"gemini-3.7-flash-tiered":  "MODEL_PLACEHOLDER_M301",
+	"gemini-3.6-flash-high":    "MODEL_PLACEHOLDER_M71",
+	"gemini-3.6-flash-medium":  "MODEL_PLACEHOLDER_M72",
+	"gemini-3.6-flash-low":     "MODEL_PLACEHOLDER_M73",
+	"gemini-pro-agent":         "MODEL_PLACEHOLDER_M16",
+	"gemini-3.1-pro-low":       "MODEL_PLACEHOLDER_M36",
+	"gemini-3.1-flash-lite":    "MODEL_PLACEHOLDER_M50",
+	"claude-opus-4-6-thinking": "MODEL_PLACEHOLDER_M26",
+	"claude-sonnet-4-6":        "MODEL_PLACEHOLDER_M35",
+	"gpt-oss-120b-medium":      "MODEL_OPENAI_GPT_OSS_120B_MEDIUM",
+}
+
+// MaxOutputTokensForModel returns the maximum allowable output tokens for a given model.
+func MaxOutputTokensForModel(model string) int {
+	lower := strings.ToLower(NormalizeModelName(model))
+	if strings.Contains(lower, "gpt") {
+		return 32768
+	}
+	if strings.Contains(lower, "claude") {
+		return 64000
+	}
+	return 65536
+}
+
+// RewriteModelInBody creates a new byte slice replacing the root-level model with targetModel,
+// and adjusts vendor-specific constraints (maxOutputTokens, thinkingBudget, labels) if nested request exists.
 func RewriteModelInBody(body []byte, targetModel string) ([]byte, error) {
 	if strings.TrimSpace(targetModel) == "" {
 		return nil, ErrEmptyTargetModel
@@ -380,6 +413,57 @@ func RewriteModelInBody(body []byte, targetModel string) ([]byte, error) {
 
 	// Segment 3: Suffix after model value
 	copy(newBody[startValIdx+newLen:], body[endValIdx:])
+
+	// Cross-vendor payload adaptation for Antigravity request payloads containing nested "request"
+	if bytes.Contains(body, []byte(`"request"`)) {
+		var doc map[string]interface{}
+		if err := json.Unmarshal(newBody, &doc); err == nil {
+			if req, ok := doc["request"].(map[string]interface{}); ok {
+				targetCat := CategorizeModel(cleanTarget)
+				maxOut := MaxOutputTokensForModel(cleanTarget)
+				changed := false
+
+				if genCfg, ok := req["generationConfig"].(map[string]interface{}); ok {
+					if currMax, ok := genCfg["maxOutputTokens"].(float64); ok && int(currMax) > maxOut {
+						genCfg["maxOutputTokens"] = maxOut
+						changed = true
+					}
+					if targetCat == CategoryClaudeGPT {
+						if thkCfg, ok := genCfg["thinkingConfig"].(map[string]interface{}); ok {
+							if budget, ok := thkCfg["thinkingBudget"].(float64); ok && budget < 1024 {
+								thkCfg["thinkingBudget"] = 1024
+								changed = true
+							}
+						}
+					}
+				}
+
+				if labels, ok := req["labels"].(map[string]interface{}); ok {
+					if targetCat == CategoryClaudeGPT {
+						labels["used_claude"] = "true"
+						labels["used_claude_conservative"] = "true"
+						labels["used_non_gemini_model"] = "true"
+						changed = true
+					} else if targetCat == CategoryGemini {
+						labels["used_claude"] = "false"
+						labels["used_claude_conservative"] = "false"
+						labels["used_non_gemini_model"] = "false"
+						changed = true
+					}
+					if placeholder, exists := ModelPlaceholderMap[cleanTarget]; exists {
+						labels["model_enum"] = placeholder
+						changed = true
+					}
+				}
+
+				if changed {
+					if remarshaled, err := json.Marshal(doc); err == nil {
+						newBody = remarshaled
+					}
+				}
+			}
+		}
+	}
 
 	return newBody, nil
 }

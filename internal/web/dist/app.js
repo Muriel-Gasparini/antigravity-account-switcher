@@ -640,6 +640,46 @@
     }
   }
 
+  function getModelCategory(modelId) {
+    const found = rawModelsData.find(m => m.id === modelId);
+    if (found && found.category) return found.category;
+    const lower = (modelId || '').toLowerCase();
+    if (lower.includes('claude') || lower.includes('gpt') || lower.includes('sonnet') || lower.includes('opus') || lower.includes('haiku') || lower.includes('3p')) {
+      return 'claude_gpt';
+    }
+    return 'gemini';
+  }
+
+  function updateSecondaryOptions() {
+    if (!selectModelPrimary || !selectModelSecondary) return;
+    const primaryVal = selectModelPrimary.value;
+    const primaryCat = getModelCategory(primaryVal);
+    const prevSecondary = selectModelSecondary.value || currentAppConfig.model_secondary;
+
+    const allowedModels = rawModelsData.filter(m => {
+      const cat = m.category || getModelCategory(m.id);
+      return cat !== primaryCat;
+    });
+
+    let html = '';
+    const label = primaryCat === 'gemini' ? 'Claude & GPT (Standby Fallback)' : 'Google Gemini (Standby Fallback)';
+    html += `<optgroup label="${label}">`;
+    allowedModels.forEach(m => {
+      const isSelected = m.id === prevSecondary ? 'selected' : '';
+      const star = m.recommended ? ' ★' : '';
+      html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}${star}</option>`;
+    });
+    html += '</optgroup>';
+
+    selectModelSecondary.innerHTML = html;
+
+    // Validate if previously selected model is still in the new option list
+    const stillValid = Array.from(selectModelSecondary.options).some(opt => opt.value === prevSecondary);
+    if (!stillValid && selectModelSecondary.options.length > 0) {
+      selectModelSecondary.selectedIndex = 0;
+    }
+  }
+
   function populateModelSelects() {
     if (!selectModelPrimary || !selectModelSecondary) return;
 
@@ -696,13 +736,16 @@
     }
 
     selectModelPrimary.innerHTML = buildOptionsHtml(currentPrimary);
-    selectModelSecondary.innerHTML = buildOptionsHtml(currentSecondary);
 
     // If current selection wasn't in list, add explicit option
     if (currentPrimary && !selectModelPrimary.value) {
       const opt = new Option(currentPrimary, currentPrimary, true, true);
       selectModelPrimary.add(opt);
     }
+
+    // Populate secondary options strictly scoped to cross-vendor models
+    updateSecondaryOptions();
+
     if (currentSecondary && !selectModelSecondary.value) {
       const opt = new Option(currentSecondary, currentSecondary, true, true);
       selectModelSecondary.add(opt);
@@ -712,14 +755,28 @@
   async function handleSaveConfig() {
     if (!btnSaveConfig) return;
 
+    const primaryVal = selectModelPrimary ? selectModelPrimary.value : currentAppConfig.model_primary;
+    const secondaryVal = selectModelSecondary ? selectModelSecondary.value : currentAppConfig.model_secondary;
+    const isFallbackEnabled = fallbackToggle ? fallbackToggle.checked : false;
+
+    // Client-side cross-vendor validation
+    if (isFallbackEnabled && primaryVal && secondaryVal) {
+      const pCat = getModelCategory(primaryVal);
+      const sCat = getModelCategory(secondaryVal);
+      if (pCat === sCat) {
+        showToast('Primary and Secondary models cannot be from the same provider. Choose Gemini ↔ Claude/GPT.', 'error', 5000);
+        return;
+      }
+    }
+
     const origText = btnSaveConfig.textContent;
     btnSaveConfig.disabled = true;
     btnSaveConfig.textContent = 'Saving...';
 
     const payload = {
-      model_primary: selectModelPrimary ? selectModelPrimary.value : currentAppConfig.model_primary,
-      model_secondary: selectModelSecondary ? selectModelSecondary.value : currentAppConfig.model_secondary,
-      fallback_secondary_enabled: fallbackToggle ? fallbackToggle.checked : false
+      model_primary: primaryVal,
+      model_secondary: secondaryVal,
+      fallback_secondary_enabled: isFallbackEnabled
     };
 
     try {
@@ -1277,6 +1334,11 @@
       fallbackToggle.addEventListener('change', () => {
         updateToggleStatusText(fallbackToggle.checked);
       });
+    }
+
+    // Dynamic secondary model options on primary model change
+    if (selectModelPrimary) {
+      selectModelPrimary.addEventListener('change', updateSecondaryOptions);
     }
 
     // Save model fallback settings

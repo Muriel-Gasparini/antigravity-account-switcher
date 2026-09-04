@@ -1091,3 +1091,97 @@ func TestRewriteModelInBody_Escaping(t *testing.T) {
 		})
 	}
 }
+
+func TestRewriteModelInBody_CrossVendorPayloadAdaptation(t *testing.T) {
+	geminiReq := `{
+		"model": "gemini-3.8-flash-high",
+		"project": "aicode-consumers",
+		"request": {
+			"contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+			"generationConfig": {
+				"maxOutputTokens": 65536,
+				"thinkingConfig": {
+					"includeThoughts": true,
+					"thinkingBudget": -1
+				}
+			},
+			"labels": {
+				"model_enum": "MODEL_PLACEHOLDER_M318",
+				"used_claude": "false",
+				"used_claude_conservative": "false",
+				"used_non_gemini_model": "false"
+			}
+		}
+	}`
+
+	// 1. Fallback to Claude Opus
+	rewrittenClaude, err := proxy.RewriteModelInBody([]byte(geminiReq), "claude-opus-4-6-thinking")
+	if err != nil {
+		t.Fatalf("Rewrite to Claude failed: %v", err)
+	}
+
+	var parsedClaude map[string]any
+	if err := json.Unmarshal(rewrittenClaude, &parsedClaude); err != nil {
+		t.Fatalf("Invalid JSON produced: %v", err)
+	}
+
+	if parsedClaude["model"] != "claude-opus-4-6-thinking" {
+		t.Errorf("expected model claude-opus-4-6-thinking, got %v", parsedClaude["model"])
+	}
+
+	reqClaude := parsedClaude["request"].(map[string]any)
+	genCfgClaude := reqClaude["generationConfig"].(map[string]any)
+	if genCfgClaude["maxOutputTokens"] != float64(64000) {
+		t.Errorf("expected maxOutputTokens clamped to 64000, got %v", genCfgClaude["maxOutputTokens"])
+	}
+
+	thkCfgClaude := genCfgClaude["thinkingConfig"].(map[string]any)
+	if thkCfgClaude["thinkingBudget"] != float64(1024) {
+		t.Errorf("expected thinkingBudget adjusted to 1024, got %v", thkCfgClaude["thinkingBudget"])
+	}
+
+	labelsClaude := reqClaude["labels"].(map[string]any)
+	if labelsClaude["used_claude"] != "true" || labelsClaude["used_non_gemini_model"] != "true" {
+		t.Errorf("expected used_claude and used_non_gemini_model to be 'true', got %v", labelsClaude)
+	}
+	if labelsClaude["model_enum"] != "MODEL_PLACEHOLDER_M26" {
+		t.Errorf("expected model_enum to be MODEL_PLACEHOLDER_M26, got %v", labelsClaude["model_enum"])
+	}
+
+	// 2. Fallback to GPT OSS
+	rewrittenGPT, err := proxy.RewriteModelInBody([]byte(geminiReq), "gpt-oss-120b-medium")
+	if err != nil {
+		t.Fatalf("Rewrite to GPT failed: %v", err)
+	}
+
+	var parsedGPT map[string]any
+	if err := json.Unmarshal(rewrittenGPT, &parsedGPT); err != nil {
+		t.Fatalf("Invalid JSON produced: %v", err)
+	}
+
+	reqGPT := parsedGPT["request"].(map[string]any)
+	genCfgGPT := reqGPT["generationConfig"].(map[string]any)
+	if genCfgGPT["maxOutputTokens"] != float64(32768) {
+		t.Errorf("expected maxOutputTokens clamped to 32768 for GPT, got %v", genCfgGPT["maxOutputTokens"])
+	}
+
+	// 3. Fallback back from Claude to Gemini
+	rewrittenGemini, err := proxy.RewriteModelInBody(rewrittenClaude, "gemini-3.8-flash-high")
+	if err != nil {
+		t.Fatalf("Rewrite to Gemini failed: %v", err)
+	}
+
+	var parsedGemini map[string]any
+	if err := json.Unmarshal(rewrittenGemini, &parsedGemini); err != nil {
+		t.Fatalf("Invalid JSON produced: %v", err)
+	}
+
+	reqGemini := parsedGemini["request"].(map[string]any)
+	labelsGemini := reqGemini["labels"].(map[string]any)
+	if labelsGemini["used_claude"] != "false" || labelsGemini["used_non_gemini_model"] != "false" {
+		t.Errorf("expected used_claude to be 'false', got %v", labelsGemini)
+	}
+	if labelsGemini["model_enum"] != "MODEL_PLACEHOLDER_M318" {
+		t.Errorf("expected model_enum to be MODEL_PLACEHOLDER_M318, got %v", labelsGemini["model_enum"])
+	}
+}

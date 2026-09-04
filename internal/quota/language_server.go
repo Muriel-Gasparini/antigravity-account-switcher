@@ -37,21 +37,24 @@ type lsQuotaResponse struct {
 	} `json:"response"`
 }
 
+type modelsPayload struct {
+	Models map[string]struct {
+		DisplayName      string `json:"displayName"`
+		Recommended      bool   `json:"recommended"`
+		SupportsThinking bool   `json:"supportsThinking"`
+	} `json:"models"`
+	DefaultAgentModelID string `json:"defaultAgentModelId"`
+	AgentModelSorts     []struct {
+		DisplayName string `json:"displayName"`
+		Groups      []struct {
+			ModelIDs []string `json:"modelIds"`
+		} `json:"groups"`
+	} `json:"agentModelSorts"`
+}
+
 type lsAvailableModelsResponse struct {
-	Response struct {
-		Models map[string]struct {
-			DisplayName      string `json:"displayName"`
-			Recommended      bool   `json:"recommended"`
-			SupportsThinking bool   `json:"supportsThinking"`
-		} `json:"models"`
-		DefaultAgentModelID string `json:"defaultAgentModelId"`
-		AgentModelSorts     []struct {
-			DisplayName string `json:"displayName"`
-			Groups      []struct {
-				ModelIDs []string `json:"modelIds"`
-			} `json:"groups"`
-		} `json:"agentModelSorts"`
-	} `json:"response"`
+	Response *modelsPayload `json:"response"`
+	modelsPayload
 }
 
 // FindLocalLanguageServer discovers the CSRF token and candidate listening ports
@@ -281,22 +284,31 @@ func QueryAvailableModels(ctx context.Context) ([]*domain.ModelInfo, error) {
 		return nil, fmt.Errorf("failed to parse available models response: %w", unmarshalErr)
 	}
 
-	if len(parsed.Response.Models) == 0 {
-		return nil, fmt.Errorf("empty models map returned by language_server")
+	payload := &parsed.modelsPayload
+	if parsed.Response != nil && len(parsed.Response.Models) > 0 {
+		payload = parsed.Response
+	}
+
+	return extractModels(payload)
+}
+
+func extractModels(p *modelsPayload) ([]*domain.ModelInfo, error) {
+	if p == nil || len(p.Models) == 0 {
+		return nil, fmt.Errorf("empty models map")
 	}
 
 	seen := make(map[string]bool)
 	var result []*domain.ModelInfo
 
 	// 1. First add sorted/recommended models in order from agentModelSorts
-	for _, sortGrp := range parsed.Response.AgentModelSorts {
+	for _, sortGrp := range p.AgentModelSorts {
 		isRecGroup := strings.EqualFold(sortGrp.DisplayName, "Recommended")
 		for _, grp := range sortGrp.Groups {
 			for _, mid := range grp.ModelIDs {
 				if seen[mid] {
 					continue
 				}
-				modelMeta, ok := parsed.Response.Models[mid]
+				modelMeta, ok := p.Models[mid]
 				if !ok {
 					continue
 				}
@@ -317,14 +329,14 @@ func QueryAvailableModels(ctx context.Context) ([]*domain.ModelInfo, error) {
 
 	// 2. Add remaining models alphabetically
 	var remainingIDs []string
-	for mid := range parsed.Response.Models {
+	for mid := range p.Models {
 		if !seen[mid] {
 			remainingIDs = append(remainingIDs, mid)
 		}
 	}
 	sort.Strings(remainingIDs)
 	for _, mid := range remainingIDs {
-		modelMeta := parsed.Response.Models[mid]
+		modelMeta := p.Models[mid]
 		dName := modelMeta.DisplayName
 		if dName == "" {
 			dName = mid
@@ -338,6 +350,66 @@ func QueryAvailableModels(ctx context.Context) ([]*domain.ModelInfo, error) {
 	}
 
 	return result, nil
+}
+
+// FetchAvailableModelsFromCloudCode queries Cloud Code PA at /v1internal:fetchAvailableModels using a Bearer token.
+func FetchAvailableModelsFromCloudCode(ctx context.Context, token string) ([]*domain.ModelInfo, error) {
+	if strings.TrimSpace(token) == "" {
+		return nil, fmt.Errorf("token is required")
+	}
+
+	reqBody := []byte(`{"project":"aicode-consumers"}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "antigravity/cli/1.1.26 (aidev_client; os_type=linux; arch=amd64; cl=976013059; auth_method=consumer)")
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed lsAvailableModelsResponse
+	if unmarshalErr := json.Unmarshal(body, &parsed); unmarshalErr != nil {
+		return nil, fmt.Errorf("failed to parse available models response: %w", unmarshalErr)
+	}
+
+	payload := &parsed.modelsPayload
+	if parsed.Response != nil && len(parsed.Response.Models) > 0 {
+		payload = parsed.Response
+	}
+
+	return extractModels(payload)
+}
+
+// DiscoverAvailableModels attempts to query available models in priority order:
+// 1. Local language_server on localhost
+// 2. Cloud Code PA via active token (if provided)
+// 3. Fallback to DefaultModelCatalog()
+func DiscoverAvailableModels(ctx context.Context, token string) []*domain.ModelInfo {
+	if models, err := QueryAvailableModels(ctx); err == nil && len(models) > 0 {
+		return models
+	}
+	if token != "" {
+		if models, err := FetchAvailableModelsFromCloudCode(ctx, token); err == nil && len(models) > 0 {
+			return models
+		}
+	}
+	return DefaultModelCatalog()
 }
 
 func categorizeModelID(id string) string {

@@ -729,43 +729,16 @@ func (a *APIHandler) HandleModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *APIHandler) discoverModels(ctx context.Context) ([]*domain.ModelInfo, string) {
-	// 1. Try querying running language_server
+	// 1. Try querying running language_server on localhost
 	if lsModels, err := quota.QueryAvailableModels(ctx); err == nil && len(lsModels) > 0 {
 		return a.ensureConfiguredModelsPresent(lsModels), "language_server"
 	}
 
-	// 2. Try inspecting quota buckets if language_server is not reachable
-	if a.quotaRepo != nil {
-		if allBuckets, err := a.quotaRepo.ListAll(ctx); err == nil && len(allBuckets) > 0 {
-			seen := make(map[string]bool)
-			var bucketModels []*domain.ModelInfo
-			for _, buckets := range allBuckets {
-				for _, b := range buckets {
-					if b == nil || b.BucketID == "" {
-						continue
-					}
-					cleanID := strings.TrimSpace(b.BucketID)
-					if idx := strings.LastIndex(cleanID, "-"); idx > 0 {
-						cleanID = cleanID[idx+1:]
-					}
-					if !seen[cleanID] && cleanID != "" {
-						seen[cleanID] = true
-						cat := "gemini"
-						if strings.Contains(strings.ToLower(cleanID), "3p") || strings.Contains(strings.ToLower(b.DisplayName), "claude") {
-							cat = "claude_gpt"
-						}
-						bucketModels = append(bucketModels, &domain.ModelInfo{
-							ID:          cleanID,
-							DisplayName: b.DisplayName,
-							Category:    cat,
-							Recommended: false,
-						})
-					}
-				}
-			}
-			if len(bucketModels) > 0 {
-				merged := append(bucketModels, quota.DefaultModelCatalog()...)
-				return a.ensureConfiguredModelsPresent(merged), "quota_buckets"
+	// 2. Try querying Cloud Code PA directly if active account token exists
+	if a.accountRepo != nil {
+		if activeAcc, err := a.accountRepo.GetActive(ctx); err == nil && activeAcc != nil && activeAcc.AccessToken != "" {
+			if ccModels, err := quota.FetchAvailableModelsFromCloudCode(ctx, activeAcc.AccessToken); err == nil && len(ccModels) > 0 {
+				return a.ensureConfiguredModelsPresent(ccModels), "cloud_code_pa"
 			}
 		}
 	}
