@@ -245,6 +245,8 @@ func runServe(args []string) {
 		web.WithVersion(Version),
 		web.WithProxyHandler(proxyHandler),
 		web.WithPoller(poller),
+		web.WithConfig(cfg),
+		web.WithFallbackConfigSetter(failoverEngine),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating web server: %v\n", err)

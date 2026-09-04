@@ -3,6 +3,7 @@ package quota
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +34,23 @@ type lsQuotaResponse struct {
 			} `json:"buckets"`
 		} `json:"groups"`
 		Description string `json:"description"`
+	} `json:"response"`
+}
+
+type lsAvailableModelsResponse struct {
+	Response struct {
+		Models map[string]struct {
+			DisplayName      string `json:"displayName"`
+			Recommended      bool   `json:"recommended"`
+			SupportsThinking bool   `json:"supportsThinking"`
+		} `json:"models"`
+		DefaultAgentModelID string `json:"defaultAgentModelId"`
+		AgentModelSorts     []struct {
+			DisplayName string `json:"displayName"`
+			Groups      []struct {
+				ModelIDs []string `json:"modelIds"`
+			} `json:"groups"`
+		} `json:"agentModelSorts"`
 	} `json:"response"`
 }
 
@@ -139,6 +158,50 @@ func FindLocalLanguageServer() (csrf string, ports []int, err error) {
 	return csrf, ports, nil
 }
 
+func doLSRequest(ctx context.Context, csrf string, ports []int, endpoint string, reqBody []byte) ([]byte, error) {
+	client := &http.Client{
+		Timeout: 2500 * time.Millisecond,
+		Transport: &http.Transport{
+			Proxy: nil, // Bypass ambient HTTP_PROXY
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, // Localhost self-signed TLS cert
+			},
+		},
+	}
+
+	schemes := []string{"https", "http"}
+	for _, port := range ports {
+		for _, scheme := range schemes {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			url := fmt.Sprintf("%s://127.0.0.1:%d%s", scheme, port, endpoint)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBody))
+			if err != nil {
+				continue
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("x-codeium-csrf-token", csrf)
+
+			resp, err := client.Do(req)
+			if err != nil {
+				continue
+			}
+
+			if resp.StatusCode == http.StatusOK {
+				body, readErr := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				if readErr == nil && len(body) > 0 {
+					return body, nil
+				}
+			} else {
+				_ = resp.Body.Close()
+			}
+		}
+	}
+	return nil, fmt.Errorf("no language_server listening port responded successfully to %s", endpoint)
+}
+
 // QueryLocalLanguageServer queries the running language_server process on localhost
 // for real model quota groups and buckets.
 func QueryLocalLanguageServer(ctx context.Context, accountID string) ([]*domain.QuotaBucket, error) {
@@ -147,54 +210,10 @@ func QueryLocalLanguageServer(ctx context.Context, accountID string) ([]*domain.
 		return nil, err
 	}
 
-	client := &http.Client{
-		Timeout: 2500 * time.Millisecond,
-		Transport: &http.Transport{
-			// Bypass any ambient HTTP_PROXY
-			Proxy: nil,
-		},
+	rawResp, err := doLSRequest(ctx, csrf, ports, "/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary", []byte(`{"forceRefresh":true}`))
+	if err != nil {
+		return nil, err
 	}
-
-	var rawResp []byte
-	var successfulPort int
-
-	for _, port := range ports {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		url := fmt.Sprintf("http://127.0.0.1:%d/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary", port)
-		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte(`{"forceRefresh":true}`)))
-		if reqErr != nil {
-			continue
-		}
-
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("x-codeium-csrf-token", csrf)
-
-		resp, doErr := client.Do(req)
-		if doErr != nil {
-			continue
-		}
-
-		if resp.StatusCode == http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if len(body) > 0 && strings.Contains(string(body), "groups") {
-				rawResp = body
-				successfulPort = port
-				break
-			}
-		} else {
-			resp.Body.Close()
-		}
-	}
-
-	if len(rawResp) == 0 {
-		return nil, fmt.Errorf("no language_server listening port responded to RetrieveUserQuotaSummary")
-	}
-
-	_ = successfulPort
 
 	var parsed lsQuotaResponse
 	if unmarshalErr := json.Unmarshal(rawResp, &parsed); unmarshalErr != nil {
@@ -243,4 +262,109 @@ func QueryLocalLanguageServer(ctx context.Context, accountID string) ([]*domain.
 	}
 
 	return buckets, nil
+}
+
+// QueryAvailableModels queries the running language_server for active AI models and tiers.
+func QueryAvailableModels(ctx context.Context) ([]*domain.ModelInfo, error) {
+	csrf, ports, err := FindLocalLanguageServer()
+	if err != nil {
+		return nil, err
+	}
+
+	rawResp, err := doLSRequest(ctx, csrf, ports, "/exa.language_server_pb.LanguageServerService/GetAvailableModels", []byte(`{}`))
+	if err != nil {
+		return nil, err
+	}
+
+	var parsed lsAvailableModelsResponse
+	if unmarshalErr := json.Unmarshal(rawResp, &parsed); unmarshalErr != nil {
+		return nil, fmt.Errorf("failed to parse available models response: %w", unmarshalErr)
+	}
+
+	if len(parsed.Response.Models) == 0 {
+		return nil, fmt.Errorf("empty models map returned by language_server")
+	}
+
+	seen := make(map[string]bool)
+	var result []*domain.ModelInfo
+
+	// 1. First add sorted/recommended models in order from agentModelSorts
+	for _, sortGrp := range parsed.Response.AgentModelSorts {
+		isRecGroup := strings.EqualFold(sortGrp.DisplayName, "Recommended")
+		for _, grp := range sortGrp.Groups {
+			for _, mid := range grp.ModelIDs {
+				if seen[mid] {
+					continue
+				}
+				modelMeta, ok := parsed.Response.Models[mid]
+				if !ok {
+					continue
+				}
+				seen[mid] = true
+				dName := modelMeta.DisplayName
+				if dName == "" {
+					dName = mid
+				}
+				result = append(result, &domain.ModelInfo{
+					ID:          mid,
+					DisplayName: dName,
+					Category:    categorizeModelID(mid),
+					Recommended: isRecGroup || modelMeta.Recommended,
+				})
+			}
+		}
+	}
+
+	// 2. Add remaining models alphabetically
+	var remainingIDs []string
+	for mid := range parsed.Response.Models {
+		if !seen[mid] {
+			remainingIDs = append(remainingIDs, mid)
+		}
+	}
+	sort.Strings(remainingIDs)
+	for _, mid := range remainingIDs {
+		modelMeta := parsed.Response.Models[mid]
+		dName := modelMeta.DisplayName
+		if dName == "" {
+			dName = mid
+		}
+		result = append(result, &domain.ModelInfo{
+			ID:          mid,
+			DisplayName: dName,
+			Category:    categorizeModelID(mid),
+			Recommended: modelMeta.Recommended,
+		})
+	}
+
+	return result, nil
+}
+
+func categorizeModelID(id string) string {
+	lower := strings.ToLower(id)
+	if strings.Contains(lower, "claude") || strings.Contains(lower, "gpt") || strings.Contains(lower, "sonnet") || strings.Contains(lower, "opus") || strings.Contains(lower, "haiku") || strings.Contains(lower, "3p") {
+		return "claude_gpt"
+	}
+	if strings.Contains(lower, "gemini") || strings.Contains(lower, "gemma") || strings.Contains(lower, "flash") || strings.Contains(lower, "pro") {
+		return "gemini"
+	}
+	return "unknown"
+}
+
+// DefaultModelCatalog provides the standard catalog of Antigravity 2.0 models.
+func DefaultModelCatalog() []*domain.ModelInfo {
+	return []*domain.ModelInfo{
+		{ID: "gemini-3.8-flash-high", DisplayName: "Gemini 3.8 Flash (High)", Category: "gemini", Recommended: true},
+		{ID: "gemini-3.8-flash-medium", DisplayName: "Gemini 3.8 Flash (Medium)", Category: "gemini", Recommended: true},
+		{ID: "gemini-3.7-flash-high", DisplayName: "Gemini 3.7 Flash (High)", Category: "gemini", Recommended: true},
+		{ID: "gemini-3.7-flash-medium", DisplayName: "Gemini 3.7 Flash (Medium)", Category: "gemini", Recommended: true},
+		{ID: "gemini-3.6-flash-medium", DisplayName: "Gemini 3.6 Flash (Medium)", Category: "gemini", Recommended: true},
+		{ID: "gemini-pro-agent", DisplayName: "Gemini 3.1 Pro (High)", Category: "gemini", Recommended: true},
+		{ID: "gemini-3.1-pro-low", DisplayName: "Gemini 3.1 Pro (Low)", Category: "gemini", Recommended: true},
+		{ID: "gemini-2.5-pro", DisplayName: "Gemini 2.5 Pro", Category: "gemini", Recommended: false},
+		{ID: "gemini-2.5-flash", DisplayName: "Gemini 2.5 Flash", Category: "gemini", Recommended: false},
+		{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6 (Thinking)", Category: "claude_gpt", Recommended: true},
+		{ID: "claude-opus-4-6-thinking", DisplayName: "Claude Opus 4.6 (Thinking)", Category: "claude_gpt", Recommended: true},
+		{ID: "gpt-oss-120b-medium", DisplayName: "GPT-OSS 120B (Medium)", Category: "claude_gpt", Recommended: true},
+	}
 }

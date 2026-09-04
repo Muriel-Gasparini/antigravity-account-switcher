@@ -272,6 +272,7 @@ func Wrap(ctx context.Context, cmdArgs []string, opts ...Option) (int, error) {
 			web.WithBindAddr("127.0.0.1"),
 			web.WithProxyHandler(proxyHandler),
 			web.WithPoller(poller),
+			web.WithFallbackConfigSetter(failoverEngine),
 		)
 		if err != nil {
 			if dbToClose != nil {

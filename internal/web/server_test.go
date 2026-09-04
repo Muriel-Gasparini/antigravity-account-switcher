@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/metrics"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/proxy"
@@ -632,4 +633,194 @@ func TestServer_ConcurrentWorkload_RaceDetector(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+type mockFallbackSetter struct {
+	mu        sync.Mutex
+	primary   string
+	secondary string
+	enabled   bool
+	calls     int
+}
+
+func (m *mockFallbackSetter) SetFallbackConfig(p, s string, e bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.primary = p
+	m.secondary = s
+	m.enabled = e
+	m.calls++
+}
+
+func TestServer_ConfigAPI(t *testing.T) {
+	_, accRepo, quotaRepo, _, metricsSvc, broadcaster, eventRepo := setupTestWeb(t)
+
+	initialCfg := &config.Config{
+		Port:                     8080,
+		ModelPrimary:             "gemini-2.5-pro",
+		ModelSecondary:           "gemini-2.5-flash",
+		FallbackSecondaryEnabled: false,
+	}
+	setter := &mockFallbackSetter{}
+
+	server, err := NewServer(
+		accRepo,
+		quotaRepo,
+		metricsSvc,
+		broadcaster,
+		eventRepo,
+		nil,
+		WithConfig(initialCfg),
+		WithFallbackConfigSetter(setter),
+	)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	ts := httptest.NewServer(server)
+	defer ts.Close()
+
+	// 1. GET /api/config
+	resp, err := http.Get(ts.URL + "/api/config")
+	if err != nil {
+		t.Fatalf("GET /api/config failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
+	}
+	var cfgResp ConfigResponse
+	if err := json.NewDecoder(resp.Body).Decode(&cfgResp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if cfgResp.ModelPrimary != "gemini-2.5-pro" || cfgResp.ModelSecondary != "gemini-2.5-flash" || cfgResp.FallbackSecondaryEnabled {
+		t.Errorf("unexpected initial config response: %+v", cfgResp)
+	}
+
+	// 2. POST /api/config with updates
+	updatePayload := `{"model_primary":"gemini-3.8-flash-high","model_secondary":"claude-sonnet-4-6","fallback_secondary_enabled":true}`
+	respPost, err := http.Post(ts.URL+"/api/config", "application/json", strings.NewReader(updatePayload))
+	if err != nil {
+		t.Fatalf("POST /api/config failed: %v", err)
+	}
+	defer respPost.Body.Close()
+
+	if respPost.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from POST /api/config, got %d", respPost.StatusCode)
+	}
+	var updatedResp ConfigResponse
+	if err := json.NewDecoder(respPost.Body).Decode(&updatedResp); err != nil {
+		t.Fatalf("failed to decode post response: %v", err)
+	}
+	if updatedResp.ModelPrimary != "gemini-3.8-flash-high" || updatedResp.ModelSecondary != "claude-sonnet-4-6" || !updatedResp.FallbackSecondaryEnabled {
+		t.Errorf("unexpected updated response: %+v", updatedResp)
+	}
+
+	// Verify fallback setter was invoked
+	setter.mu.Lock()
+	if setter.calls != 1 || setter.primary != "gemini-3.8-flash-high" || setter.secondary != "claude-sonnet-4-6" || !setter.enabled {
+		t.Errorf("setter state unexpected: calls=%d, primary=%s, sec=%s, enabled=%t", setter.calls, setter.primary, setter.secondary, setter.enabled)
+	}
+	setter.mu.Unlock()
+
+	// 3. Re-query GET /api/config to verify cache
+	respGet2, err := http.Get(ts.URL + "/api/config")
+	if err != nil {
+		t.Fatalf("GET /api/config #2 failed: %v", err)
+	}
+	defer respGet2.Body.Close()
+	var cfgResp2 ConfigResponse
+	if err := json.NewDecoder(respGet2.Body).Decode(&cfgResp2); err != nil {
+		t.Fatalf("failed to decode response #2: %v", err)
+	}
+	if cfgResp2.ModelPrimary != "gemini-3.8-flash-high" || !cfgResp2.FallbackSecondaryEnabled {
+		t.Errorf("config was not updated in subsequent GET: %+v", cfgResp2)
+	}
+
+	// 4. POST /api/config with invalid JSON
+	respBad, err := http.Post(ts.URL+"/api/config", "application/json", strings.NewReader("invalid-json"))
+	if err != nil {
+		t.Fatalf("POST bad json failed: %v", err)
+	}
+	defer respBad.Body.Close()
+	if respBad.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for malformed json, got %d", respBad.StatusCode)
+	}
+}
+
+func TestServer_ModelsAPI(t *testing.T) {
+	_, accRepo, quotaRepo, _, metricsSvc, broadcaster, eventRepo := setupTestWeb(t)
+
+	server, err := NewServer(
+		accRepo,
+		quotaRepo,
+		metricsSvc,
+		broadcaster,
+		eventRepo,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	ts := httptest.NewServer(server)
+	defer ts.Close()
+
+	// 1. GET /api/models
+	resp, err := http.Get(ts.URL + "/api/models")
+	if err != nil {
+		t.Fatalf("GET /api/models failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
+	}
+
+	var modelsResp ModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
+		t.Fatalf("failed to decode models response: %v", err)
+	}
+
+	if len(modelsResp.Models) == 0 {
+		t.Fatal("expected at least one model in response")
+	}
+	if modelsResp.Source == "" {
+		t.Error("expected non-empty source in models response")
+	}
+
+	foundClaude := false
+	foundGemini := false
+	for _, m := range modelsResp.Models {
+		if m.ID == "" {
+			t.Error("expected model to have non-empty ID")
+		}
+		if m.DisplayName == "" {
+			t.Errorf("expected model %s to have display name", m.ID)
+		}
+		if m.Category == "claude_gpt" {
+			foundClaude = true
+		}
+		if m.Category == "gemini" {
+			foundGemini = true
+		}
+	}
+
+	if !foundGemini {
+		t.Error("expected Gemini model in models response")
+	}
+	if !foundClaude {
+		t.Error("expected Claude/GPT model in models response")
+	}
+
+	// 2. Method Not Allowed check
+	respPost, err := http.Post(ts.URL+"/api/models", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST /api/models failed: %v", err)
+	}
+	defer respPost.Body.Close()
+	if respPost.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 Method Not Allowed for POST /api/models, got %d", respPost.StatusCode)
+	}
 }

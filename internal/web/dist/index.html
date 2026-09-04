@@ -117,6 +117,81 @@
       </div>
     </section>
 
+    <!-- Section 2.5: Model Fallback & Routing Strategy -->
+    <section class="panel" aria-labelledby="fallback-section-title">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2 id="fallback-section-title" class="panel-title">
+            Model Fallback & Routing
+            <span id="models-source-badge" class="badge badge-info mono">Discovering models...</span>
+          </h2>
+          <p class="panel-description">Dynamic multi-tier model rotation. Rewrites in-flight requests to secondary model when primary tier is exhausted before rotating accounts.</p>
+        </div>
+        <div class="header-actions">
+          <button id="btn-refresh-models" class="btn btn-secondary btn-icon" title="Fetch live models from Antigravity" aria-label="Refresh Models">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" id="refresh-models-icon" width="14" height="14">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span class="btn-text-desktop">Fetch Models</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="fallback-config-card">
+        <!-- Toggle secondary fallback -->
+        <div class="config-row config-toggle-row">
+          <div class="config-label-group">
+            <label for="fallback-enabled-toggle" class="config-label">Intra-Account Secondary Fallback</label>
+            <p class="config-subtext">When primary quota exhausts, try secondary model on the SAME account before switching to next account.</p>
+          </div>
+          <div class="switch-control">
+            <input type="checkbox" id="fallback-enabled-toggle" class="toggle-checkbox" role="switch" aria-checked="false">
+            <label for="fallback-enabled-toggle" class="toggle-track" aria-hidden="true"></label>
+            <span id="fallback-toggle-status" class="toggle-label-text">Disabled</span>
+          </div>
+        </div>
+
+        <!-- Model Selectors Grid -->
+        <div class="config-selectors-grid">
+          <!-- Primary Model -->
+          <div class="config-field">
+            <label for="select-model-primary" class="field-label">
+              Primary Model
+              <span class="field-badge badge-primary">Preferred</span>
+            </label>
+            <div class="select-wrapper">
+              <select id="select-model-primary" class="form-select">
+                <option value="gemini-2.5-pro">Loading models...</option>
+              </select>
+            </div>
+            <p class="field-hint">Initial tier attempted for incoming requests.</p>
+          </div>
+
+          <!-- Secondary Model -->
+          <div class="config-field">
+            <label for="select-model-secondary" class="field-label">
+              Secondary Model (Fallback)
+              <span class="field-badge badge-neutral">Standby</span>
+            </label>
+            <div class="select-wrapper">
+              <select id="select-model-secondary" class="form-select">
+                <option value="gemini-2.5-flash">Loading models...</option>
+              </select>
+            </div>
+            <p class="field-hint">Used as failover when primary tier is exhausted on the active account.</p>
+          </div>
+        </div>
+
+        <!-- Action Bar -->
+        <div class="config-actions-bar">
+          <div class="config-status-msg" id="config-status-msg" aria-live="polite"></div>
+          <button id="btn-save-config" class="btn btn-primary" title="Save Fallback Settings">
+            Save Settings
+          </button>
+        </div>
+      </div>
+    </section>
+
     <!-- Section 3: Token Consumption & 14-Day Timeline Visualizer -->
     <section class="panel" aria-labelledby="metrics-section-title">
       <div class="panel-header">

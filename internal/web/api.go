@@ -9,24 +9,49 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	_ "time/tzdata"
 
+	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/oauth"
+	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/quota"
 )
+
+// FallbackConfigSetter defines an interface for dynamically updating model fallback settings at runtime.
+type FallbackConfigSetter interface {
+	SetFallbackConfig(primary, secondary string, enabled bool)
+}
 
 // APIHandler implements the REST endpoints and SSE real-time streaming for the switcher.
 type APIHandler struct {
-	accountRepo    domain.AccountRepository
-	quotaRepo      domain.QuotaRepository
-	metricsService domain.MetricsService
-	broadcaster    domain.EventBroadcaster
-	eventRepo      domain.EventRepository
-	oauthEngine    oauth.OAuthEngine
-	poller         QuotaPoller
-	startTime      time.Time
-	version        string
+	accountRepo          domain.AccountRepository
+	quotaRepo            domain.QuotaRepository
+	metricsService       domain.MetricsService
+	broadcaster          domain.EventBroadcaster
+	eventRepo            domain.EventRepository
+	oauthEngine          oauth.OAuthEngine
+	poller               QuotaPoller
+	startTime            time.Time
+	version              string
+	cfgMu                sync.RWMutex
+	appConfig            *config.Config
+	fallbackConfigSetter FallbackConfigSetter
+}
+
+// SetConfig sets the configuration pointer for APIHandler.
+func (a *APIHandler) SetConfig(c *config.Config) {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	a.appConfig = c
+}
+
+// SetFallbackConfigSetter sets the dynamic fallback setter for live proxy updates.
+func (a *APIHandler) SetFallbackConfigSetter(s FallbackConfigSetter) {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	a.fallbackConfigSetter = s
 }
 
 // QuotaPoller defines interface for triggering quota polling passes.
@@ -531,4 +556,241 @@ func writeErrorJSON(w http.ResponseWriter, statusCode int, message string, err e
 			"detail":  detail,
 		},
 	})
+}
+
+// ConfigResponse represents the response payload for GET /api/config.
+type ConfigResponse struct {
+	ModelPrimary             string `json:"model_primary"`
+	ModelSecondary           string `json:"model_secondary"`
+	FallbackSecondaryEnabled bool   `json:"fallback_secondary_enabled"`
+}
+
+// ConfigUpdateRequest represents the payload for POST /api/config.
+type ConfigUpdateRequest struct {
+	ModelPrimary             *string `json:"model_primary,omitempty"`
+	ModelSecondary           *string `json:"model_secondary,omitempty"`
+	FallbackSecondaryEnabled *bool   `json:"fallback_secondary_enabled,omitempty"`
+}
+
+// HandleConfig serves GET and POST /api/config.
+func (a *APIHandler) HandleConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		a.getConfig(w, r)
+	case http.MethodPost, http.MethodPut:
+		a.updateConfig(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *APIHandler) getConfig(w http.ResponseWriter, _ *http.Request) {
+	a.cfgMu.RLock()
+	var primary, secondary string
+	var enabled bool
+	if a.appConfig != nil {
+		primary = a.appConfig.ModelPrimary
+		secondary = a.appConfig.ModelSecondary
+		enabled = a.appConfig.FallbackSecondaryEnabled
+	}
+	a.cfgMu.RUnlock()
+
+	if primary == "" {
+		if diskCfg, err := config.Load(); err == nil && diskCfg != nil {
+			primary = diskCfg.ModelPrimary
+			secondary = diskCfg.ModelSecondary
+			enabled = diskCfg.FallbackSecondaryEnabled
+		} else {
+			def := config.DefaultConfig()
+			primary = def.ModelPrimary
+			secondary = def.ModelSecondary
+			enabled = def.FallbackSecondaryEnabled
+		}
+	}
+
+	writeJSON(w, http.StatusOK, ConfigResponse{
+		ModelPrimary:             primary,
+		ModelSecondary:           secondary,
+		FallbackSecondaryEnabled: enabled,
+	})
+}
+
+func (a *APIHandler) updateConfig(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
+	var req ConfigUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+
+	a.cfgMu.Lock()
+	var currentCfg *config.Config
+	if a.appConfig != nil {
+		currentCfg = a.appConfig
+	} else {
+		loaded, err := config.Load()
+		if err != nil || loaded == nil {
+			loaded = config.DefaultConfig()
+		}
+		currentCfg = loaded
+		a.appConfig = loaded
+	}
+
+	if req.ModelPrimary != nil {
+		if trimmed := strings.TrimSpace(*req.ModelPrimary); trimmed != "" {
+			currentCfg.ModelPrimary = trimmed
+		}
+	}
+	if req.ModelSecondary != nil {
+		if trimmed := strings.TrimSpace(*req.ModelSecondary); trimmed != "" {
+			currentCfg.ModelSecondary = trimmed
+		}
+	}
+	if req.FallbackSecondaryEnabled != nil {
+		currentCfg.FallbackSecondaryEnabled = *req.FallbackSecondaryEnabled
+	}
+
+	if err := currentCfg.Validate(); err != nil {
+		a.cfgMu.Unlock()
+		writeErrorJSON(w, http.StatusBadRequest, "invalid configuration", err)
+		return
+	}
+
+	_ = config.Save(currentCfg)
+
+	if a.fallbackConfigSetter != nil {
+		a.fallbackConfigSetter.SetFallbackConfig(
+			currentCfg.ModelPrimary,
+			currentCfg.ModelSecondary,
+			currentCfg.FallbackSecondaryEnabled,
+		)
+	}
+
+	resp := ConfigResponse{
+		ModelPrimary:             currentCfg.ModelPrimary,
+		ModelSecondary:           currentCfg.ModelSecondary,
+		FallbackSecondaryEnabled: currentCfg.FallbackSecondaryEnabled,
+	}
+	broadcaster := a.broadcaster
+	a.cfgMu.Unlock()
+
+	if broadcaster != nil {
+		broadcaster.Broadcast(&domain.ProxyEvent{
+			Type:    domain.EventTypeModelFallback,
+			Message: fmt.Sprintf("Model fallback updated: Primary=%s, Secondary=%s, Enabled=%t", resp.ModelPrimary, resp.ModelSecondary, resp.FallbackSecondaryEnabled),
+			Details: map[string]any{
+				"model_primary":              resp.ModelPrimary,
+				"model_secondary":            resp.ModelSecondary,
+				"fallback_secondary_enabled": resp.FallbackSecondaryEnabled,
+			},
+			Timestamp: time.Now().UTC(),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ModelsResponse models the JSON payload for GET /api/models.
+type ModelsResponse struct {
+	Models []*domain.ModelInfo `json:"models"`
+	Source string              `json:"source"`
+}
+
+// HandleModels serves GET /api/models.
+func (a *APIHandler) HandleModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx := r.Context()
+	models, source := a.discoverModels(ctx)
+
+	writeJSON(w, http.StatusOK, ModelsResponse{
+		Models: models,
+		Source: source,
+	})
+}
+
+func (a *APIHandler) discoverModels(ctx context.Context) ([]*domain.ModelInfo, string) {
+	// 1. Try querying running language_server
+	if lsModels, err := quota.QueryAvailableModels(ctx); err == nil && len(lsModels) > 0 {
+		return a.ensureConfiguredModelsPresent(lsModels), "language_server"
+	}
+
+	// 2. Try inspecting quota buckets if language_server is not reachable
+	if a.quotaRepo != nil {
+		if allBuckets, err := a.quotaRepo.ListAll(ctx); err == nil && len(allBuckets) > 0 {
+			seen := make(map[string]bool)
+			var bucketModels []*domain.ModelInfo
+			for _, buckets := range allBuckets {
+				for _, b := range buckets {
+					if b == nil || b.BucketID == "" {
+						continue
+					}
+					cleanID := strings.TrimSpace(b.BucketID)
+					if idx := strings.LastIndex(cleanID, "-"); idx > 0 {
+						cleanID = cleanID[idx+1:]
+					}
+					if !seen[cleanID] && cleanID != "" {
+						seen[cleanID] = true
+						cat := "gemini"
+						if strings.Contains(strings.ToLower(cleanID), "3p") || strings.Contains(strings.ToLower(b.DisplayName), "claude") {
+							cat = "claude_gpt"
+						}
+						bucketModels = append(bucketModels, &domain.ModelInfo{
+							ID:          cleanID,
+							DisplayName: b.DisplayName,
+							Category:    cat,
+							Recommended: false,
+						})
+					}
+				}
+			}
+			if len(bucketModels) > 0 {
+				merged := append(bucketModels, quota.DefaultModelCatalog()...)
+				return a.ensureConfiguredModelsPresent(merged), "quota_buckets"
+			}
+		}
+	}
+
+	// 3. Fallback to comprehensive Antigravity model catalog
+	return a.ensureConfiguredModelsPresent(quota.DefaultModelCatalog()), "catalog"
+}
+
+func (a *APIHandler) ensureConfiguredModelsPresent(models []*domain.ModelInfo) []*domain.ModelInfo {
+	seen := make(map[string]bool, len(models))
+	for _, m := range models {
+		if m != nil {
+			seen[m.ID] = true
+		}
+	}
+
+	a.cfgMu.RLock()
+	var primary, secondary string
+	if a.appConfig != nil {
+		primary = a.appConfig.ModelPrimary
+		secondary = a.appConfig.ModelSecondary
+	}
+	a.cfgMu.RUnlock()
+
+	if primary != "" && !seen[primary] {
+		models = append(models, &domain.ModelInfo{
+			ID:          primary,
+			DisplayName: primary,
+			Category:    "gemini",
+			Recommended: true,
+		})
+		seen[primary] = true
+	}
+	if secondary != "" && !seen[secondary] {
+		models = append(models, &domain.ModelInfo{
+			ID:          secondary,
+			DisplayName: secondary,
+			Category:    "gemini",
+			Recommended: true,
+		})
+	}
+
+	return models
 }
