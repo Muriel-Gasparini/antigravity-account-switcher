@@ -25,14 +25,17 @@ import (
 
 // Config holds options for the Wrap supervisor.
 type Config struct {
-	Port         int
-	DBPath       string
-	TargetURL    string
-	PollInterval time.Duration
-	OpenBrowser  bool
-	Stdin        io.Reader
-	Stdout       io.Writer
-	Stderr       io.Writer
+	Port                     int
+	DBPath                   string
+	TargetURL                string
+	PollInterval             time.Duration
+	OpenBrowser              bool
+	ModelPrimary             string
+	ModelSecondary           string
+	FallbackSecondaryEnabled bool
+	Stdin                    io.Reader
+	Stdout                   io.Writer
+	Stderr                   io.Writer
 
 	// Injectable dependencies for unit and integration testing
 	DB     *sqlite.DB
@@ -42,6 +45,15 @@ type Config struct {
 
 // Option configures Wrap behavior.
 type Option func(*Config)
+
+// WithModelFallback configures the model fallback primary, secondary, and enabled flag.
+func WithModelFallback(primary, secondary string, enabled bool) Option {
+	return func(c *Config) {
+		c.ModelPrimary = primary
+		c.ModelSecondary = secondary
+		c.FallbackSecondaryEnabled = enabled
+	}
+}
 
 // WithPort sets the switcher listening port (0 allocates a random ephemeral port).
 func WithPort(p int) Option {
@@ -189,7 +201,13 @@ func Wrap(ctx context.Context, cmdArgs []string, opts ...Option) (int, error) {
 		eventRepo = sqlite.NewEventRepository(db)
 
 		broadcaster = proxy.NewBroadcaster(100)
-		failoverEngine := proxy.NewFailoverEngine(accRepo, broadcaster, eventRepo)
+		failoverEngine := proxy.NewFailoverEngine(
+			accRepo,
+			broadcaster,
+			eventRepo,
+			proxy.WithQuotaRepository(quotaRepo),
+			proxy.WithModelFallback(cfg.ModelPrimary, cfg.ModelSecondary, cfg.FallbackSecondaryEnabled),
+		)
 		oauthService = oauth.NewOAuthService(accRepo)
 
 		// Automatically import existing Antigravity login if pool is empty

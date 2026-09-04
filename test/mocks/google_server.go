@@ -139,6 +139,7 @@ func NewMockGoogleServer() *MockGoogleServer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1internal:streamGenerateContent", m.handleStreamGenerateContent)
 	mux.HandleFunc("/v1internal:generateContent", m.handleStreamGenerateContent)
+	mux.HandleFunc("/v1internal/models/", m.handleStreamGenerateContent)
 	mux.HandleFunc("/v1internal:retrieveUserQuotaSummary", m.handleRetrieveUserQuotaSummary)
 	mux.HandleFunc("/v1internal:retrieveUserQuota", m.handleRetrieveUserQuota)
 	mux.HandleFunc("/token", m.handleOAuthToken)

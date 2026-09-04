@@ -5,9 +5,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -78,7 +80,7 @@ func printUsage() {
 	fmt.Println("  launch             Launch Google Antigravity 2.0 directly with coupled proxy supervisor")
 	fmt.Println("  serve              Start the local proxy, quota monitor, and web dashboard")
 	fmt.Println("  wrap               Supervise any command with scoped proxy environment (PR_SET_PDEATHSIG)")
-	fmt.Println("  config             Get, set, or list persistent configuration (port, db, paths)")
+	fmt.Println("  config             Get, set, or list persistent configuration (models, port, db, paths)")
 	fmt.Println("  install-desktop    Install GNOME / XDG desktop application entry with official icon")
 	fmt.Println("  uninstall-desktop  Remove GNOME / XDG desktop application entry")
 	fmt.Println("  add-account        Onboard a Google account via 1-click browser OAuth2 flow")
@@ -102,20 +104,32 @@ func defaultDBPath() string {
 	return config.DefaultDBPath()
 }
 
+// addModelFlags registers model fallback flags on the provided FlagSet,
+// with defaults populated from the current loaded configuration.
+func addModelFlags(fs *flag.FlagSet, cfg *config.Config) (fallbackSecondary *bool, modelPrimary *string, modelSecondary *string) {
+	fallbackSecondary = fs.Bool("fallback-secondary", cfg.FallbackSecondaryEnabled, "Enable intra-account secondary model fallback before account rotation")
+	modelPrimary = fs.String("model-primary", cfg.ModelPrimary, "Primary model identifier")
+	modelSecondary = fs.String("model-secondary", cfg.ModelSecondary, "Secondary model fallback identifier")
+	return
+}
+
 func runServe(args []string) {
 	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
 	defaultPort := 8080
-	if cfg != nil && cfg.Port > 0 {
+	if cfg.Port > 0 {
 		defaultPort = cfg.Port
 	}
 	defaultPollInterval := quota.DefaultPollInterval
-	if cfg != nil && cfg.QuotaInterval != "" {
+	if cfg.QuotaInterval != "" {
 		if d, err := time.ParseDuration(cfg.QuotaInterval); err == nil {
 			defaultPollInterval = d
 		}
 	}
 	defaultTargetURL := proxy.DefaultTargetURL
-	if cfg != nil && cfg.UpstreamURL != "" {
+	if cfg.UpstreamURL != "" {
 		defaultTargetURL = cfg.UpstreamURL
 	}
 
@@ -125,7 +139,17 @@ func runServe(args []string) {
 	dbPath := fs.String("db", defaultDBPath(), "Path to SQLite database file")
 	pollInterval := fs.Duration("poll-interval", defaultPollInterval, "Background quota polling interval")
 	targetURL := fs.String("target-url", defaultTargetURL, "Google Cloud Code PA upstream target")
+	fallbackSecondary, modelPrimary, modelSecondary := addModelFlags(fs, cfg)
 	_ = fs.Parse(args)
+
+	cfg.FallbackSecondaryEnabled = *fallbackSecondary
+	cfg.ModelPrimary = *modelPrimary
+	cfg.ModelSecondary = *modelSecondary
+
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Printf("Initializing Antigravity Account Switcher v%s...\n", Version)
 	fmt.Printf("Database: %s\n", *dbPath)
@@ -146,7 +170,13 @@ func runServe(args []string) {
 	eventRepo := sqlite.NewEventRepository(db)
 
 	broadcaster := proxy.NewBroadcaster(100)
-	failoverEngine := proxy.NewFailoverEngine(accRepo, broadcaster, eventRepo)
+	failoverEngine := proxy.NewFailoverEngine(
+		accRepo,
+		broadcaster,
+		eventRepo,
+		proxy.WithQuotaRepository(quotaRepo),
+		proxy.WithModelFallback(cfg.ModelPrimary, cfg.ModelSecondary, cfg.FallbackSecondaryEnabled),
+	)
 	oauthService := oauth.NewOAuthService(accRepo)
 
 	// Automatically import existing Antigravity login if pool is empty
@@ -225,6 +255,11 @@ func runServe(args []string) {
 	fmt.Printf("    Web Dashboard: http://%s:%d/\n", *bind, boundPort)
 	fmt.Printf("    Proxy Port:    http://%s:%d/\n", *bind, boundPort)
 	fmt.Printf("    Quota Daemon:  Active (interval: %v)\n", *pollInterval)
+	if cfg.FallbackSecondaryEnabled {
+		fmt.Printf("    Model Fallback: Enabled (%s -> %s)\n", cfg.ModelPrimary, cfg.ModelSecondary)
+	} else {
+		fmt.Printf("    Model Fallback: Disabled\n")
+	}
 	fmt.Println("\nPress Ctrl+C to stop.")
 
 	<-ctx.Done()
@@ -240,14 +275,17 @@ func runServe(args []string) {
 
 func runWrap(args []string) {
 	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
 	defaultPollInterval := quota.DefaultPollInterval
-	if cfg != nil && cfg.QuotaInterval != "" {
+	if cfg.QuotaInterval != "" {
 		if d, err := time.ParseDuration(cfg.QuotaInterval); err == nil {
 			defaultPollInterval = d
 		}
 	}
 	defaultTargetURL := proxy.DefaultTargetURL
-	if cfg != nil && cfg.UpstreamURL != "" {
+	if cfg.UpstreamURL != "" {
 		defaultTargetURL = cfg.UpstreamURL
 	}
 
@@ -256,6 +294,8 @@ func runWrap(args []string) {
 	dbPath := fs.String("db", defaultDBPath(), "Path to SQLite database file")
 	targetURL := fs.String("target-url", defaultTargetURL, "Google Cloud Code PA upstream target")
 	pollInterval := fs.Duration("poll-interval", defaultPollInterval, "Quota polling interval")
+
+	fallbackSecondary, modelPrimary, modelSecondary := addModelFlags(fs, cfg)
 
 	// Separate launcher flags from command line
 	var cmdToRun []string
@@ -278,6 +318,15 @@ func runWrap(args []string) {
 		cmdToRun = fs.Args()
 	}
 
+	cfg.FallbackSecondaryEnabled = *fallbackSecondary
+	cfg.ModelPrimary = *modelPrimary
+	cfg.ModelSecondary = *modelSecondary
+
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+		os.Exit(1)
+	}
+
 	if len(cmdToRun) == 0 {
 		fmt.Println("Usage: antigravity-account-switcher wrap [flags] -- <command> [args...]")
 		os.Exit(1)
@@ -293,6 +342,7 @@ func runWrap(args []string) {
 		launcher.WithDBPath(*dbPath),
 		launcher.WithTargetURL(*targetURL),
 		launcher.WithPollInterval(*pollInterval),
+		launcher.WithModelFallback(cfg.ModelPrimary, cfg.ModelSecondary, cfg.FallbackSecondaryEnabled),
 	)
 
 	if err != nil {
@@ -459,9 +509,12 @@ func runStatus(args []string) {
 
 func runLaunch(args []string) {
 	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
 
 	defaultPollInterval := quota.DefaultPollInterval
-	if cfg != nil && cfg.QuotaInterval != "" {
+	if cfg.QuotaInterval != "" {
 		if d, err := time.ParseDuration(cfg.QuotaInterval); err == nil {
 			defaultPollInterval = d
 		}
@@ -475,6 +528,8 @@ func runLaunch(args []string) {
 	dbPath := fs.String("db", cfg.DBPath, "Path to SQLite database file")
 	targetURL := fs.String("target-url", cfg.UpstreamURL, "Google Cloud Code PA upstream target")
 	pollInterval := fs.Duration("poll-interval", defaultPollInterval, "Quota polling interval")
+
+	fallbackSecondary, modelPrimary, modelSecondary := addModelFlags(fs, cfg)
 
 	dashDashIdx := -1
 	for i, arg := range args {
@@ -493,6 +548,15 @@ func runLaunch(args []string) {
 	} else {
 		_ = fs.Parse(args)
 		passthroughArgs = fs.Args()
+	}
+
+	cfg.FallbackSecondaryEnabled = *fallbackSecondary
+	cfg.ModelPrimary = *modelPrimary
+	cfg.ModelSecondary = *modelSecondary
+
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+		os.Exit(1)
 	}
 
 	antigravityBin, err := config.ResolveAntigravityBin(*binFlag)
@@ -531,6 +595,7 @@ func runLaunch(args []string) {
 		launcher.WithDBPath(*dbPath),
 		launcher.WithTargetURL(*targetURL),
 		launcher.WithPollInterval(*pollInterval),
+		launcher.WithModelFallback(cfg.ModelPrimary, cfg.ModelSecondary, cfg.FallbackSecondaryEnabled),
 	)
 
 	if err != nil {
@@ -547,61 +612,86 @@ func runLaunch(args []string) {
 }
 
 func runConfig(args []string) {
+	if code := executeConfig(args, os.Stdout, os.Stderr); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func executeConfig(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] == "list" {
 		cfg, _ := config.Load()
-		fmt.Printf("Configuration file: %s\n\n", config.ConfigFilePath())
-		fmt.Printf("  antigravity_bin: %s\n", cfg.AntigravityBin)
-		fmt.Printf("  port:            %d\n", cfg.Port)
-		fmt.Printf("  db_path:         %s\n", cfg.DBPath)
-		fmt.Printf("  upstream_url:    %s\n", cfg.UpstreamURL)
-		fmt.Printf("  quota_interval:  %s\n", cfg.QuotaInterval)
-		fmt.Printf("  open_browser:    %t\n", cfg.OpenBrowser)
-		return
+		if cfg == nil {
+			cfg = config.DefaultConfig()
+		}
+		fmt.Fprintf(stdout, "Configuration file: %s\n\n", config.ConfigFilePath())
+		fmt.Fprintf(stdout, "  antigravity_bin:            %s\n", cfg.AntigravityBin)
+		fmt.Fprintf(stdout, "  port:                       %d\n", cfg.Port)
+		fmt.Fprintf(stdout, "  db_path:                    %s\n", cfg.DBPath)
+		fmt.Fprintf(stdout, "  upstream_url:               %s\n", cfg.UpstreamURL)
+		fmt.Fprintf(stdout, "  quota_interval:             %s\n", cfg.QuotaInterval)
+		fmt.Fprintf(stdout, "  open_browser:               %t\n", cfg.OpenBrowser)
+		fmt.Fprintf(stdout, "  model_primary:              %s\n", cfg.ModelPrimary)
+		fmt.Fprintf(stdout, "  model_secondary:            %s\n", cfg.ModelSecondary)
+		fmt.Fprintf(stdout, "  fallback_secondary_enabled: %t\n", cfg.FallbackSecondaryEnabled)
+		return 0
 	}
 
 	subcmd := args[0]
 	switch subcmd {
 	case "get":
 		if len(args) < 2 {
-			fmt.Println("Usage: antigravity-account-switcher config get <key>")
-			os.Exit(1)
+			fmt.Fprintln(stdout, "Usage: antigravity-account-switcher config get <key>")
+			return 1
 		}
 		key := args[1]
 		cfg, _ := config.Load()
+		if cfg == nil {
+			cfg = config.DefaultConfig()
+		}
 		switch key {
 		case "antigravity_bin":
-			fmt.Println(cfg.AntigravityBin)
+			fmt.Fprintln(stdout, cfg.AntigravityBin)
 		case "port":
-			fmt.Println(cfg.Port)
+			fmt.Fprintln(stdout, cfg.Port)
 		case "db_path":
-			fmt.Println(cfg.DBPath)
+			fmt.Fprintln(stdout, cfg.DBPath)
 		case "upstream_url":
-			fmt.Println(cfg.UpstreamURL)
+			fmt.Fprintln(stdout, cfg.UpstreamURL)
 		case "quota_interval":
-			fmt.Println(cfg.QuotaInterval)
+			fmt.Fprintln(stdout, cfg.QuotaInterval)
 		case "open_browser":
-			fmt.Println(cfg.OpenBrowser)
+			fmt.Fprintln(stdout, cfg.OpenBrowser)
+		case "model_primary":
+			fmt.Fprintln(stdout, cfg.ModelPrimary)
+		case "model_secondary":
+			fmt.Fprintln(stdout, cfg.ModelSecondary)
+		case "fallback_secondary_enabled":
+			fmt.Fprintln(stdout, cfg.FallbackSecondaryEnabled)
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown configuration key: %s\n", key)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "Unknown configuration key: %s\n", key)
+			return 1
 		}
+		return 0
 
 	case "set":
 		if len(args) < 3 {
-			fmt.Println("Usage: antigravity-account-switcher config set <key> <value>")
-			os.Exit(1)
+			fmt.Fprintln(stdout, "Usage: antigravity-account-switcher config set <key> <value>")
+			return 1
 		}
 		key := args[1]
 		val := args[2]
 		cfg, _ := config.Load()
+		if cfg == nil {
+			cfg = config.DefaultConfig()
+		}
 		switch key {
 		case "antigravity_bin":
 			cfg.AntigravityBin = val
 		case "port":
 			var p int
 			if _, err := fmt.Sscanf(val, "%d", &p); err != nil || p <= 0 {
-				fmt.Fprintf(os.Stderr, "Invalid port value: %s\n", val)
-				os.Exit(1)
+				fmt.Fprintf(stderr, "Invalid port value: %s\n", val)
+				return 1
 			}
 			cfg.Port = p
 		case "db_path":
@@ -611,21 +701,53 @@ func runConfig(args []string) {
 		case "quota_interval":
 			cfg.QuotaInterval = val
 		case "open_browser":
-			cfg.OpenBrowser = (val == "true" || val == "1" || val == "yes")
+			b, err := config.ParseBool(val)
+			if err != nil {
+				fmt.Fprintf(stderr, "Invalid boolean value for open_browser: %s\n", val)
+				return 1
+			}
+			cfg.OpenBrowser = b
+		case "model_primary":
+			trimmed := strings.TrimSpace(val)
+			if trimmed == "" {
+				fmt.Fprintf(stderr, "Invalid model_primary: value cannot be empty\n")
+				return 1
+			}
+			cfg.ModelPrimary = trimmed
+		case "model_secondary":
+			trimmed := strings.TrimSpace(val)
+			if trimmed == "" {
+				fmt.Fprintf(stderr, "Invalid model_secondary: value cannot be empty\n")
+				return 1
+			}
+			cfg.ModelSecondary = trimmed
+		case "fallback_secondary_enabled":
+			b, err := config.ParseBool(val)
+			if err != nil {
+				fmt.Fprintf(stderr, "Invalid boolean value for fallback_secondary_enabled: %s (expected true, false, 1, or 0)\n", val)
+				return 1
+			}
+			cfg.FallbackSecondaryEnabled = b
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown configuration key: %s\n", key)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "Unknown configuration key: %s\n", key)
+			return 1
+		}
+
+		if err := cfg.Validate(); err != nil {
+			fmt.Fprintf(stderr, "Configuration validation failed: %v\n", err)
+			return 1
 		}
 
 		if err := config.Save(cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to save configuration: %v\n", err)
-			os.Exit(1)
+			fmt.Fprintf(stderr, "Failed to save configuration: %v\n", err)
+			return 1
 		}
-		fmt.Printf("Updated '%s' to '%s' in %s\n", key, val, config.ConfigFilePath())
+		fmt.Fprintf(stdout, "Updated '%s' to '%s' in %s\n", key, val, config.ConfigFilePath())
+		return 0
 
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown config subcommand: %s. Use 'list', 'get', or 'set'.\n", subcmd)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "Unknown config subcommand: %s. Use 'list', 'get', or 'set'.\n", subcmd)
+		return 1
 	}
 }
 

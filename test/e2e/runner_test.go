@@ -59,7 +59,13 @@ func setupE2EEnvironment(t *testing.T, pollInterval time.Duration) *TestEnvironm
 	eventRepo := sqlite.NewEventRepository(db)
 
 	broadcaster := proxy.NewBroadcaster(200)
-	failoverEngine := proxy.NewFailoverEngine(accRepo, broadcaster, eventRepo)
+	failoverEngine := proxy.NewFailoverEngine(
+		accRepo,
+		broadcaster,
+		eventRepo,
+		proxy.WithQuotaRepository(quotaRepo),
+		proxy.WithModelFallback("gemini-2.5-pro", "gemini-2.5-flash", true),
+	)
 
 	proxyHandler, err := proxy.NewProxyHandler(
 		accRepo,

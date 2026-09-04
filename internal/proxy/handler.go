@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,10 +9,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
 )
 
@@ -41,6 +45,7 @@ func (f TokenRefresherFunc) RefreshToken(ctx context.Context, refreshToken strin
 type Config struct {
 	TargetURL         string
 	MaxRetries        int
+	maxRetriesSet     bool
 	MaxBodyBytes      int64
 	HTTPClient        *http.Client
 	TokenExpiryMargin time.Duration
@@ -66,7 +71,10 @@ func WithTargetURL(u string) Option {
 
 // WithMaxRetries configures the maximum number of failover retries.
 func WithMaxRetries(n int) Option {
-	return func(c *Config) { c.MaxRetries = n }
+	return func(c *Config) {
+		c.MaxRetries = n
+		c.maxRetriesSet = true
+	}
 }
 
 // WithMaxBodyBytes configures the in-memory request buffering upper bound.
@@ -368,6 +376,101 @@ func (h *ProxyHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+// rewriteRequestModel rewrites the model in request URL path, query string,
+// in-memory buffered body, and transport headers without modifying other parts of the request.
+func (h *ProxyHandler) rewriteRequestModel(
+	r *http.Request,
+	buffered *BufferedRequest,
+	targetModel string,
+) *BufferedRequest {
+	if r == nil || targetModel == "" || buffered == nil {
+		return buffered
+	}
+
+	newPath := RewriteModelInPath(r.URL.Path, targetModel)
+	newQuery := r.URL.RawQuery
+	if newQuery != "" {
+		newQuery = RewriteModelInQuery(newQuery, targetModel)
+	}
+
+	newBodyBytes := buffered.Bytes()
+	if len(newBodyBytes) > 0 {
+		if rewrittenBody, err := RewriteModelInBody(newBodyBytes, targetModel); err == nil {
+			newBodyBytes = rewrittenBody
+		}
+	}
+
+	newBuffered := &BufferedRequest{Body: newBodyBytes}
+	SynchronizeRequest(r, newBodyBytes, newPath, newQuery)
+	return newBuffered
+}
+
+// applyPredictiveFallback checks whether the incoming request targets an exhausted primary
+// model on the active account, and if so, proactively rewrites it to the secondary model.
+// Returns the updated BufferedRequest, the effective model name, and whether rewrite occurred.
+func (h *ProxyHandler) applyPredictiveFallback(
+	ctx context.Context,
+	acc *domain.Account,
+	r *http.Request,
+	buffered *BufferedRequest,
+) (*BufferedRequest, string, bool) {
+	if h.failoverEngine == nil || acc == nil || r == nil || buffered == nil {
+		return buffered, "", false
+	}
+
+	reqModel, _, _ := ExtractModelFromRequest(r, buffered.Bytes())
+	if reqModel == "" {
+		return buffered, "", false
+	}
+
+	shouldRewrite, targetModel, err := h.failoverEngine.PredictiveCheck(ctx, acc, reqModel)
+	if err != nil || !shouldRewrite || targetModel == "" {
+		return buffered, reqModel, false
+	}
+
+	newBuffered := h.rewriteRequestModel(r, buffered, targetModel)
+	return newBuffered, targetModel, true
+}
+
+// syncFallbackConfigFromEnv dynamically reconciles the failover engine's fallback configuration
+// with environment variable overrides if they are set (e.g. in E2E tests or runtime reconfigurations).
+func (h *ProxyHandler) syncFallbackConfigFromEnv() {
+	if h.failoverEngine == nil {
+		return
+	}
+	envFallback := os.Getenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED")
+	envPri := os.Getenv("ANTIGRAVITY_MODEL_PRIMARY")
+	envSec := os.Getenv("ANTIGRAVITY_MODEL_SECONDARY")
+	if envFallback == "" && envPri == "" && envSec == "" {
+		return
+	}
+
+	h.failoverEngine.mu.RLock()
+	pri := h.failoverEngine.modelPrimary
+	sec := h.failoverEngine.modelSecondary
+	enabled := h.failoverEngine.fallbackSecondaryEnabled
+	h.failoverEngine.mu.RUnlock()
+
+	changed := false
+	if envPri != "" && strings.TrimSpace(envPri) != "" && strings.TrimSpace(envPri) != pri {
+		pri = strings.TrimSpace(envPri)
+		changed = true
+	}
+	if envSec != "" && strings.TrimSpace(envSec) != "" && strings.TrimSpace(envSec) != sec {
+		sec = strings.TrimSpace(envSec)
+		changed = true
+	}
+	if envFallback != "" {
+		if b, err := config.ParseBool(envFallback); err == nil && b != enabled {
+			enabled = b
+			changed = true
+		}
+	}
+	if changed {
+		h.failoverEngine.SetFallbackConfig(pri, sec, enabled)
+	}
+}
+
 // ServeHTTP handles incoming reverse and forward proxy requests, performs request buffering,
 // dynamically injects active account Bearer tokens, retries upon HTTP 429 quota exhaustion,
 // and streams SSE responses line-by-line while capturing token usage metrics.
@@ -377,6 +480,9 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleConnect(w, r)
 		return
 	}
+
+	// Reconcile fallback configuration with environment variables if set
+	h.syncFallbackConfigFromEnv()
 
 	// 1. Buffer request body up to configured limit for zero-error re-readability on failover
 	buffered, err := NewBufferedRequestWithLimit(r, h.cfg.MaxBodyBytes)
@@ -431,13 +537,57 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		isPassThrough = true
 	}
 
+	// 2. Capture original request baseline
+	origModel, _, _ := ExtractModelFromRequest(r, buffered.Bytes())
+	origPath := r.URL.Path
+	origQuery := r.URL.RawQuery
+	origBody := buffered.Bytes()
+
+	currentModel := origModel
+	currentPath := origPath
+	currentQuery := origQuery
+	currentBody := origBody
+
+	// Predictive fallback check before initial upstream dispatch
+	if isCloudCode && !isPassThrough && currentAcc != nil && origModel != "" {
+		newBuffered, targetModel, rewritten := h.applyPredictiveFallback(ctx, currentAcc, r, buffered)
+		if rewritten {
+			buffered = newBuffered
+			currentModel = targetModel
+			currentPath = r.URL.Path
+			currentQuery = r.URL.RawQuery
+			currentBody = buffered.Bytes()
+		}
+	}
+
 	// 3. Retry loop: attempt upstream request with failover on 429 / RESOURCE_EXHAUSTED
 	var lastRespStatusCode int
 	var lastRespHeader http.Header
 	var lastErrBody []byte
 
 	maxAttempts := h.cfg.MaxRetries
-	if isPassThrough {
+	if !isPassThrough {
+		if !h.cfg.maxRetriesSet {
+			totalAccounts := 1
+			if accounts, accErr := h.accountRepo.List(ctx); accErr == nil && len(accounts) > 0 {
+				totalAccounts = len(accounts)
+			}
+			tiers := 1
+			if h.failoverEngine != nil {
+				h.failoverEngine.mu.RLock()
+				if h.failoverEngine.fallbackSecondaryEnabled {
+					tiers = 2
+				}
+				h.failoverEngine.mu.RUnlock()
+			}
+			if dynamicBound := totalAccounts * tiers; dynamicBound > maxAttempts {
+				maxAttempts = dynamicBound
+			}
+		}
+		if maxAttempts > 50 {
+			maxAttempts = 50
+		}
+	} else {
 		maxAttempts = 0 // Pass-through doesn't rotate accounts
 	}
 
@@ -461,12 +611,12 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if isCloudCode {
 			destURL = *h.targetURL
 			if destURL.Path == "" || destURL.Path == "/" {
-				destURL.Path = r.URL.Path
+				destURL.Path = currentPath
 			} else {
-				destURL.Path = strings.TrimRight(destURL.Path, "/") + "/" + strings.TrimLeft(r.URL.Path, "/")
+				destURL.Path = strings.TrimRight(destURL.Path, "/") + "/" + strings.TrimLeft(currentPath, "/")
 			}
 			destURL.RawPath = r.URL.RawPath
-			destURL.RawQuery = r.URL.RawQuery
+			destURL.RawQuery = currentQuery
 		} else {
 			destURL = *r.URL
 			if destURL.Scheme == "" {
@@ -477,18 +627,21 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		outReq, reqErr := http.NewRequestWithContext(ctx, r.Method, destURL.String(), buffered.NewReader())
+		outReq, reqErr := http.NewRequestWithContext(ctx, r.Method, destURL.String(), bytes.NewReader(currentBody))
 		if reqErr != nil {
 			http.Error(w, fmt.Sprintf("failed to create upstream request: %v", reqErr), http.StatusInternalServerError)
 			return
 		}
-		outReq.ContentLength = int64(buffered.Size())
+		outReq.ContentLength = int64(len(currentBody))
 		outReq.GetBody = func() (io.ReadCloser, error) {
-			return buffered.NewReader(), nil
+			return io.NopCloser(bytes.NewReader(currentBody)), nil
 		}
 
 		// Copy request headers, stripping hop-by-hop
 		copyRequestHeaders(outReq.Header, r.Header)
+		if len(currentBody) > 0 {
+			outReq.Header.Set("Content-Length", strconv.Itoa(len(currentBody)))
+		}
 
 		// Retarget Host header
 		if isCloudCode {
@@ -512,7 +665,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Check if request expects SSE streaming
 		isSSE := strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream") ||
 			r.URL.Query().Get("alt") == "sse" ||
-			strings.Contains(r.URL.Path, "streamGenerateContent")
+			strings.Contains(currentPath, "streamGenerateContent")
 		if isSSE {
 			// Disable upstream gzip compression so SSE data lines can be intercepted in plaintext in real-time
 			outReq.Header.Set("Accept-Encoding", "identity")
@@ -541,53 +694,114 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Check for quota exhaustion: HTTP 429 or HTTP 403 with RESOURCE_EXHAUSTED
-		if !isPassThrough && currentAcc != nil && resp.StatusCode == http.StatusTooManyRequests {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
+		if !isPassThrough && currentAcc != nil {
+			var bodyBytes []byte
+			isExhausted := false
 
-			lastRespStatusCode = resp.StatusCode
-			lastRespHeader = resp.Header.Clone()
-			lastErrBody = bodyBytes
-
-			nextAcc, rotateErr := h.failoverEngine.RotateAccount(ctx, currentAcc)
-			if rotateErr != nil {
-				// Entire account pool is exhausted! Forward upstream 429 response verbatim
-				copyResponseHeaders(w.Header(), resp.Header)
-				w.WriteHeader(resp.StatusCode)
-				_, _ = w.Write(bodyBytes)
-				return
-			}
-
-			// Successfully rotated to next account, retry request
-			currentAcc = nextAcc
-			continue
-		}
-
-		if !isPassThrough && currentAcc != nil && resp.StatusCode == http.StatusForbidden {
-			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-			_ = resp.Body.Close()
-
-			if IsExhaustionResponse(resp.StatusCode, bodyBytes) {
-				lastRespStatusCode = resp.StatusCode
-				lastRespHeader = resp.Header.Clone()
-				lastErrBody = bodyBytes
-
-				nextAcc, rotateErr := h.failoverEngine.RotateAccount(ctx, currentAcc)
-				if rotateErr != nil {
+			if resp.StatusCode == http.StatusTooManyRequests {
+				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+				_ = resp.Body.Close()
+				isExhausted = true
+			} else if resp.StatusCode == http.StatusForbidden {
+				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+				_ = resp.Body.Close()
+				if IsExhaustionResponse(resp.StatusCode, bodyBytes) {
+					isExhausted = true
+				} else {
+					// Non-quota 403 Forbidden passthrough
 					copyResponseHeaders(w.Header(), resp.Header)
 					w.WriteHeader(resp.StatusCode)
 					_, _ = w.Write(bodyBytes)
 					return
 				}
-				currentAcc = nextAcc
-				continue
 			}
 
-			// Non-quota 403 Forbidden: transparent passthrough
-			copyResponseHeaders(w.Header(), resp.Header)
-			w.WriteHeader(resp.StatusCode)
-			_, _ = w.Write(bodyBytes)
-			return
+			if isExhausted {
+				lastRespStatusCode = resp.StatusCode
+				lastRespHeader = resp.Header.Clone()
+				lastErrBody = bodyBytes
+
+				if h.failoverEngine != nil {
+					action, targetModel, nextAcc, failoverErr := h.failoverEngine.HandleExhaustion(ctx, currentAcc, currentModel)
+					if failoverErr != nil || nextAcc == nil {
+						// Entire account pool is exhausted! Forward upstream 429 response verbatim
+						copyResponseHeaders(w.Header(), resp.Header)
+						w.WriteHeader(resp.StatusCode)
+						_, _ = w.Write(bodyBytes)
+						return
+					}
+
+					switch action {
+					case ActionFallbackSecondary:
+						// Intra-account fallback: rewrite to secondary model on SAME account
+						currentModel = targetModel
+						currentPath = RewriteModelInPath(origPath, targetModel)
+						if origQuery != "" {
+							currentQuery = RewriteModelInQuery(origQuery, targetModel)
+						} else {
+							currentQuery = ""
+						}
+						currentBody = origBody
+						if len(origBody) > 0 {
+							if rewritten, rwErr := RewriteModelInBody(origBody, targetModel); rwErr == nil {
+								currentBody = rewritten
+							}
+						}
+						buffered = &BufferedRequest{Body: currentBody}
+						SynchronizeRequest(r, currentBody, currentPath, currentQuery)
+						currentAcc = nextAcc // Same account
+						continue
+
+					case ActionRotateAccount:
+						// Account rotated: switch to nextAcc, reset back to primary model and original body
+						currentAcc = nextAcc
+						currentModel = origModel
+						currentPath = origPath
+						currentQuery = origQuery
+						currentBody = origBody
+						buffered = &BufferedRequest{Body: currentBody}
+						SynchronizeRequest(r, currentBody, currentPath, currentQuery)
+
+						// Proactive check on new account
+						if origModel != "" {
+							if shouldRewrite, tgtModel, pErr := h.failoverEngine.PredictiveCheck(ctx, currentAcc, origModel); pErr == nil && shouldRewrite {
+								currentModel = tgtModel
+								currentPath = RewriteModelInPath(origPath, tgtModel)
+								if origQuery != "" {
+									currentQuery = RewriteModelInQuery(origQuery, tgtModel)
+								}
+								if len(origBody) > 0 {
+									if rewritten, rwErr := RewriteModelInBody(origBody, tgtModel); rwErr == nil {
+										currentBody = rewritten
+									}
+								}
+								buffered = &BufferedRequest{Body: currentBody}
+								SynchronizeRequest(r, currentBody, currentPath, currentQuery)
+							}
+						}
+						continue
+
+					default:
+						// ActionNone: return upstream response
+						copyResponseHeaders(w.Header(), resp.Header)
+						w.WriteHeader(resp.StatusCode)
+						_, _ = w.Write(bodyBytes)
+						return
+					}
+				} else {
+					nextAcc, rotateErr := h.accountRepo.GetNextAvailable(ctx, currentAcc.ID)
+					if rotateErr != nil || nextAcc == nil {
+						copyResponseHeaders(w.Header(), resp.Header)
+						w.WriteHeader(resp.StatusCode)
+						_, _ = w.Write(bodyBytes)
+						return
+					}
+					_ = h.accountRepo.UpdateStatus(ctx, currentAcc.ID, domain.AccountStatusExhausted)
+					_ = h.accountRepo.SetActive(ctx, nextAcc.ID)
+					currentAcc = nextAcc
+					continue
+				}
+			}
 		}
 
 		// Non-exhausted upstream response (e.g. 200 OK, 400, 500)
@@ -597,8 +811,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		w.WriteHeader(resp.StatusCode)
 
+		var accID string
+		if currentAcc != nil {
+			accID = currentAcc.ID
+		}
+
 		if isRespSSE {
-			_ = StreamAndInterceptSSE(ctx, w, resp.Body, currentAcc.ID, r.URL.Path, h.metricsRepo, h.eventBroadcaster)
+			_ = StreamAndInterceptSSE(ctx, w, resp.Body, accID, currentPath, h.metricsRepo, h.eventBroadcaster)
 			_ = resp.Body.Close()
 			return
 		}

@@ -173,6 +173,10 @@ The CLI provides commands for launch supervision, manual switching, and configur
   ```bash
   antigravity-account-switcher launch --port 1831
   ```
+- **Multi-Tier Model Fallback on Launch:**
+  ```bash
+  antigravity-account-switcher launch --fallback-secondary --model-primary gemini-2.5-pro --model-secondary claude-3-7-sonnet
+  ```
 
 ---
 
@@ -192,6 +196,13 @@ antigravity-account-switcher config set port 1831
 
 # Adjust background quota check interval
 antigravity-account-switcher config set quota_interval 60s
+
+# Configure preferred primary and secondary contingency models
+antigravity-account-switcher config set model_primary gemini-2.5-pro
+antigravity-account-switcher config set model_secondary claude-3-7-sonnet
+
+# Enable intra-account model fallback before rotating accounts
+antigravity-account-switcher config set fallback_secondary_enabled true
 ```
 
 ### Environment Variables
@@ -203,6 +214,9 @@ antigravity-account-switcher config set quota_interval 60s
 | `ANTIGRAVITY_DB_PATH` | Path to the SQLite database file (default: `~/.config/.../accounts.db`). |
 | `ANTIGRAVITY_CLIENT_ID` | Optional custom Google Cloud Console OAuth Client ID override. |
 | `ANTIGRAVITY_CLIENT_SECRET` | Optional custom Google Cloud Console OAuth Client Secret override. |
+| `ANTIGRAVITY_MODEL_PRIMARY` | Overrides default primary model tier. |
+| `ANTIGRAVITY_MODEL_SECONDARY` | Overrides default secondary fallback model tier. |
+| `ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED` | Enables/disables intra-account secondary fallback (`true`/`false`). |
 
 ---
 
