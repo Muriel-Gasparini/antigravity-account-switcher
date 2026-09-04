@@ -42,6 +42,7 @@ jobs:
     name: Build and Publish Release
     runs-on: ubuntu-latest
     needs: validate
+    environment: os
     permissions:
       contents: write
     steps:
