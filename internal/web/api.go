@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/oauth"
@@ -356,6 +359,9 @@ func (a *APIHandler) HandleMetrics(w http.ResponseWriter, r *http.Request) {
 
 	accountID := r.URL.Query().Get("account_id")
 	periodParam := r.URL.Query().Get("period")
+	tzParam := r.URL.Query().Get("tz")
+	tzOffsetParam := r.URL.Query().Get("tz_offset")
+	loc := parseLocation(tzParam, tzOffsetParam)
 
 	if accountID != "" {
 		norm := domain.PeriodLifetime
@@ -371,13 +377,33 @@ func (a *APIHandler) HandleMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := a.metricsService.GetDashboardPayload(ctx, 14)
+	payload, err := a.metricsService.GetDashboardPayloadWithLocation(ctx, 14, loc)
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to compute metrics dashboard payload", err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, payload)
+}
+
+// parseLocation resolves a *time.Location from either an IANA timezone name or a numeric minute offset.
+func parseLocation(tzParam, tzOffsetParam string) *time.Location {
+	if tzParam != "" {
+		if loc, err := time.LoadLocation(tzParam); err == nil {
+			return loc
+		}
+	}
+	if tzOffsetParam != "" {
+		// tz_offset in minutes: -new Date().getTimezoneOffset()
+		// e.g. -180 for UTC-3, +540 for UTC+9
+		if offsetMinutes, err := strconv.Atoi(tzOffsetParam); err == nil {
+			hours := offsetMinutes / 60
+			mins := int(math.Abs(float64(offsetMinutes % 60)))
+			name := fmt.Sprintf("UTC%+03d:%02d", hours, mins)
+			return time.FixedZone(name, offsetMinutes*60)
+		}
+	}
+	return time.UTC
 }
 
 // HandleEvents serves GET /api/events as a real-time SSE stream.

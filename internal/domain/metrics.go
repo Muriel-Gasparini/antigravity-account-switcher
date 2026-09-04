@@ -96,6 +96,11 @@ type AccountSummariesRepository interface {
 	GetAccountSummaries(ctx context.Context, period string) (map[string]*AggregatedMetrics, error)
 }
 
+// TimezoneDailyHistoryRepository defines the timezone-aware daily aggregation capability.
+type TimezoneDailyHistoryRepository interface {
+	GetDailyHistoryInLocation(ctx context.Context, accountID string, days int, loc *time.Location) ([]*DailyTokenUsage, error)
+}
+
 // MetricsService specifies the use-case methods exposed to HTTP handlers and CLI.
 type MetricsService interface {
 	// GetSummary returns token consumption for a single account over the specified period.
@@ -110,8 +115,14 @@ type MetricsService interface {
 	// GetDailyUsage returns daily time-series usage for charting over the past N days.
 	GetDailyUsage(ctx context.Context, accountID string, days int, zeroFill bool) ([]*DailyTokenUsage, error)
 
+	// GetDailyUsageInLocation returns daily time-series usage for charting over the past N days in a specific timezone location.
+	GetDailyUsageInLocation(ctx context.Context, accountID string, days int, zeroFill bool, loc *time.Location) ([]*DailyTokenUsage, error)
+
 	// GetDashboardPayload returns the comprehensive dataset required by M4 UI.
 	GetDashboardPayload(ctx context.Context, timelineDays int) (*MetricsDashboardPayload, error)
+
+	// GetDashboardPayloadWithLocation returns the comprehensive dataset adjusted for a specific timezone location.
+	GetDashboardPayloadWithLocation(ctx context.Context, timelineDays int, loc *time.Location) (*MetricsDashboardPayload, error)
 
 	// Record logs an individual token usage metric (delegates to repository).
 	Record(ctx context.Context, m *TokenMetric) error

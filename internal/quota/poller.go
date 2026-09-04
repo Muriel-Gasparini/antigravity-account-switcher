@@ -17,13 +17,13 @@ import (
 
 const (
 	// DefaultPollInterval is the normal polling period for quota checks.
-	DefaultPollInterval = 60 * time.Second
+	DefaultPollInterval = 5 * time.Minute
 	// DefaultBaseURL is the Google Cloud Code PA endpoint.
 	DefaultBaseURL = "https://daily-cloudcode-pa.googleapis.com"
 	// DefaultTokenExpiryMargin is the safety window before expiration to trigger token refresh.
 	DefaultTokenExpiryMargin = 60 * time.Second
 	// DefaultHTTPTimeout is the client network timeout.
-	DefaultHTTPTimeout = 15 * time.Second
+	DefaultHTTPTimeout = 30 * time.Second
 )
 
 // TokenRefresher defines the contract for refreshing OAuth2 tokens.

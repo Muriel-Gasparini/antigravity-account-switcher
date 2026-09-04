@@ -140,7 +140,7 @@ func Wrap(ctx context.Context, cmdArgs []string, opts ...Option) (int, error) {
 
 	cfg := Config{
 		Port:         0, // Default to ephemeral port for collision-free launch
-		PollInterval: 60 * time.Second,
+		PollInterval: 5 * time.Minute,
 		Stdin:        os.Stdin,
 		Stdout:       os.Stdout,
 		Stderr:       os.Stderr,

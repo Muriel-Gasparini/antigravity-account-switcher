@@ -174,18 +174,31 @@ func (r *MetricsRepository) GetAccountSummaries(ctx context.Context, period stri
 	return summaries, rows.Err()
 }
 
-// GetDailyHistory retrieves daily aggregated token usage for chart rendering over the past N days.
+// GetDailyHistory retrieves daily aggregated token usage for chart rendering over the past N days in UTC.
 func (r *MetricsRepository) GetDailyHistory(ctx context.Context, accountID string, days int) ([]*domain.DailyTokenUsage, error) {
+	return r.GetDailyHistoryInLocation(ctx, accountID, days, time.UTC)
+}
+
+// GetDailyHistoryInLocation retrieves daily aggregated token usage for chart rendering over the past N days in a specified location.
+func (r *MetricsRepository) GetDailyHistoryInLocation(ctx context.Context, accountID string, days int, loc *time.Location) ([]*domain.DailyTokenUsage, error) {
 	if days <= 0 {
 		days = 14
 	}
+	if loc == nil {
+		loc = time.UTC
+	}
 
-	since := time.Now().UTC().AddDate(0, 0, -days)
-	sinceStr := since.Format(time.RFC3339)
+	now := time.Now().In(loc)
+	earliestDay := now.AddDate(0, 0, -(days - 1))
+	startOfWindow := time.Date(earliestDay.Year(), earliestDay.Month(), earliestDay.Day(), 0, 0, 0, 0, loc)
+	sinceStr := startOfWindow.UTC().Format(time.RFC3339)
+
+	_, offsetSec := now.Zone()
+	modifier := fmt.Sprintf("%+d seconds", offsetSec)
 
 	query := `
 		SELECT
-			strftime('%Y-%m-%d', timestamp) AS day,
+			strftime('%Y-%m-%d', timestamp, ?) AS day,
 			COALESCE(SUM(prompt_tokens), 0),
 			COALESCE(SUM(candidates_tokens), 0),
 			COALESCE(SUM(total_tokens), 0),
@@ -199,7 +212,7 @@ func (r *MetricsRepository) GetDailyHistory(ctx context.Context, accountID strin
 		ORDER BY day ASC
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, accountID, accountID, sinceStr)
+	rows, err := r.db.QueryContext(ctx, query, modifier, accountID, accountID, sinceStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query daily token history: %w", err)
 	}

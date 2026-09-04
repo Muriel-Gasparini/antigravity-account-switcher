@@ -109,10 +109,18 @@ func (s *Service) GetAccountBreakdown(ctx context.Context, period domain.MetricP
 	return result, nil
 }
 
-// GetDailyUsage retrieves daily grouped usage, with optional contiguous zero-filling.
+// GetDailyUsage retrieves daily grouped usage, with optional contiguous zero-filling in UTC.
 func (s *Service) GetDailyUsage(ctx context.Context, accountID string, days int, zeroFill bool) ([]*domain.DailyTokenUsage, error) {
+	return s.GetDailyUsageInLocation(ctx, accountID, days, zeroFill, time.UTC)
+}
+
+// GetDailyUsageInLocation retrieves daily grouped usage in the specified location.
+func (s *Service) GetDailyUsageInLocation(ctx context.Context, accountID string, days int, zeroFill bool, loc *time.Location) ([]*domain.DailyTokenUsage, error) {
 	if days <= 0 {
 		days = 14
+	}
+	if loc == nil {
+		loc = time.UTC
 	}
 
 	if accountID != "" && s.accountRepo != nil {
@@ -121,7 +129,13 @@ func (s *Service) GetDailyUsage(ctx context.Context, accountID string, days int,
 		}
 	}
 
-	history, err := s.metricsRepo.GetDailyHistory(ctx, accountID, days)
+	var history []*domain.DailyTokenUsage
+	var err error
+	if tzRepo, ok := s.metricsRepo.(domain.TimezoneDailyHistoryRepository); ok {
+		history, err = tzRepo.GetDailyHistoryInLocation(ctx, accountID, days, loc)
+	} else {
+		history, err = s.metricsRepo.GetDailyHistory(ctx, accountID, days)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +149,7 @@ func (s *Service) GetDailyUsage(ctx context.Context, accountID string, days int,
 		lookup[h.Date] = h
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().In(loc)
 	filled := make([]*domain.DailyTokenUsage, 0, days)
 	for i := days - 1; i >= 0; i-- {
 		dateStr := now.AddDate(0, 0, -i).Format("2006-01-02")
@@ -151,8 +165,17 @@ func (s *Service) GetDailyUsage(ctx context.Context, accountID string, days int,
 	return filled, nil
 }
 
-// GetDashboardPayload composes the multi-window summary, breakdown, and timeline.
+// GetDashboardPayload composes the multi-window summary, breakdown, and timeline in UTC.
 func (s *Service) GetDashboardPayload(ctx context.Context, timelineDays int) (*domain.MetricsDashboardPayload, error) {
+	return s.GetDashboardPayloadWithLocation(ctx, timelineDays, time.UTC)
+}
+
+// GetDashboardPayloadWithLocation composes the multi-window summary, breakdown, and timeline in the specified location.
+func (s *Service) GetDashboardPayloadWithLocation(ctx context.Context, timelineDays int, loc *time.Location) (*domain.MetricsDashboardPayload, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
+
 	today, err := s.GetGlobalSummary(ctx, domain.PeriodDay)
 	if err != nil {
 		return nil, err
@@ -175,7 +198,7 @@ func (s *Service) GetDashboardPayload(ctx context.Context, timelineDays int) (*d
 		return nil, err
 	}
 
-	timeline, err := s.GetDailyUsage(ctx, "", timelineDays, true)
+	timeline, err := s.GetDailyUsageInLocation(ctx, "", timelineDays, true, loc)
 	if err != nil {
 		return nil, err
 	}
