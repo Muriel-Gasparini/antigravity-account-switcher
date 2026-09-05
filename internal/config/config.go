@@ -4,27 +4,36 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 const (
-	DefaultPort        = 8080
-	DefaultUpstreamURL = "https://daily-cloudcode-pa.googleapis.com"
-	DefaultInterval    = "5m"
-	ConfigFileName     = "config.json"
-	DefaultDBFileName  = "accounts.db"
+	DefaultPort                     = 8080
+	DefaultUpstreamURL              = "https://daily-cloudcode-pa.googleapis.com"
+	DefaultInterval                 = "5m"
+	ConfigFileName                  = "config.json"
+	DefaultDBFileName               = "accounts.db"
+	DefaultModelPrimary             = "gemini-2.5-pro"
+	DefaultModelSecondary           = "claude-3-5-sonnet"
+	DefaultFallbackSecondaryEnabled = false
 )
 
 // Config holds persistent user configuration.
 type Config struct {
-	Port           int    `json:"port"`
-	DBPath         string `json:"db_path"`
-	AntigravityBin string `json:"antigravity_bin"`
-	UpstreamURL    string `json:"upstream_url"`
-	QuotaInterval  string `json:"quota_interval"`
-	OpenBrowser    bool   `json:"open_browser"`
+	Port                     int    `json:"port"`
+	DBPath                   string `json:"db_path"`
+	AntigravityBin           string `json:"antigravity_bin"`
+	UpstreamURL              string `json:"upstream_url"`
+	QuotaInterval            string `json:"quota_interval"`
+	OpenBrowser              bool   `json:"open_browser"`
+	ModelPrimary             string `json:"model_primary"`
+	ModelSecondary           string `json:"model_secondary"`
+	FallbackSecondaryEnabled bool   `json:"fallback_secondary_enabled"`
 }
 
 // ConfigDir returns the default configuration directory (~/.config/antigravity-account-switcher).
@@ -55,11 +64,15 @@ func DefaultDBPath() string {
 // DefaultConfig returns an initialized Config struct with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		Port:           DefaultPort,
-		DBPath:         DefaultDBPath(),
-		AntigravityBin: "",
-		UpstreamURL:    DefaultUpstreamURL,
-		QuotaInterval:  DefaultInterval,
+		Port:                     DefaultPort,
+		DBPath:                   DefaultDBPath(),
+		AntigravityBin:           "",
+		UpstreamURL:              DefaultUpstreamURL,
+		QuotaInterval:            DefaultInterval,
+		OpenBrowser:              false,
+		ModelPrimary:             DefaultModelPrimary,
+		ModelSecondary:           DefaultModelSecondary,
+		FallbackSecondaryEnabled: DefaultFallbackSecondaryEnabled,
 	}
 }
 
@@ -69,15 +82,14 @@ func Load() (*Config, error) {
 	path := ConfigFilePath()
 
 	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
-		}
+	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("failed to read config file at %s: %w", path, err)
 	}
 
-	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config JSON at %s: %w", path, err)
+	if err == nil {
+		if err := json.Unmarshal(data, cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse config JSON at %s: %w", path, err)
+		}
 	}
 
 	// Environment variable overrides
@@ -95,6 +107,29 @@ func Load() (*Config, error) {
 	}
 	if envUpstream := os.Getenv("ANTIGRAVITY_UPSTREAM_URL"); envUpstream != "" {
 		cfg.UpstreamURL = envUpstream
+	}
+	if envPrimary := os.Getenv("ANTIGRAVITY_MODEL_PRIMARY"); envPrimary != "" {
+		if trimmed := strings.TrimSpace(envPrimary); trimmed != "" {
+			cfg.ModelPrimary = trimmed
+		}
+	}
+	if envSecondary := os.Getenv("ANTIGRAVITY_MODEL_SECONDARY"); envSecondary != "" {
+		if trimmed := strings.TrimSpace(envSecondary); trimmed != "" {
+			cfg.ModelSecondary = trimmed
+		}
+	}
+	if envFallback := os.Getenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED"); envFallback != "" {
+		if b, err := ParseBool(envFallback); err == nil {
+			cfg.FallbackSecondaryEnabled = b
+		}
+	}
+
+	// Defensive defaults if unmarshaled JSON contained explicit empty strings
+	if cfg.ModelPrimary == "" {
+		cfg.ModelPrimary = DefaultModelPrimary
+	}
+	if cfg.ModelSecondary == "" {
+		cfg.ModelSecondary = DefaultModelSecondary
 	}
 
 	return cfg, nil
@@ -120,6 +155,79 @@ func Save(cfg *Config) error {
 	return nil
 }
 
+// ParseBool parses string representations of boolean values.
+// Recognizes truthy values: "1", "t", "true", "yes", "y", "on" (case-insensitive).
+// Recognizes falsy values: "0", "f", "false", "no", "n", "off" (case-insensitive).
+// Any other string returns an error.
+func ParseBool(val string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "1", "t", "true", "yes", "y", "on":
+		return true, nil
+	case "0", "f", "false", "no", "n", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("cannot parse %q as boolean", val)
+	}
+}
+
+// Validate verifies configuration boundaries, network URLs, and model fallback invariants.
+func (c *Config) Validate() error {
+	if c.Port < 1 || c.Port > 65535 {
+		return fmt.Errorf("invalid port %d: must be between 1 and 65535", c.Port)
+	}
+	if c.UpstreamURL != "" {
+		parsed, err := url.Parse(c.UpstreamURL)
+		if err != nil {
+			return fmt.Errorf("invalid upstream_url %q: %w", c.UpstreamURL, err)
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return fmt.Errorf("invalid upstream_url %q: scheme must be http or https", c.UpstreamURL)
+		}
+	}
+	if c.QuotaInterval != "" {
+		if _, err := time.ParseDuration(c.QuotaInterval); err != nil {
+			return fmt.Errorf("invalid quota_interval %q: %w", c.QuotaInterval, err)
+		}
+	}
+	if c.FallbackSecondaryEnabled {
+		primary := strings.TrimSpace(c.ModelPrimary)
+		secondary := strings.TrimSpace(c.ModelSecondary)
+		if primary == "" {
+			return errors.New("model_primary cannot be empty when fallback_secondary_enabled is true")
+		}
+		if secondary == "" {
+			return errors.New("model_secondary cannot be empty when fallback_secondary_enabled is true")
+		}
+		if strings.EqualFold(primary, secondary) {
+			return fmt.Errorf("model_primary and model_secondary cannot be identical (%q)", c.ModelPrimary)
+		}
+
+		primaryCat := categorizeModelSimple(primary)
+		secondaryCat := categorizeModelSimple(secondary)
+
+		if primaryCat != "unknown" && secondaryCat != "unknown" && primaryCat == secondaryCat {
+			return fmt.Errorf("model_primary and model_secondary must belong to different providers (Gemini vs Claude/GPT), both are %s", primaryCat)
+		}
+	}
+	return nil
+}
+
+// categorizeModelSimple is a lightweight categorization for validation purposes.
+func categorizeModelSimple(model string) string {
+	lower := strings.ToLower(model)
+	if strings.Contains(lower, "claude") || strings.Contains(lower, "gpt") ||
+		strings.Contains(lower, "sonnet") || strings.Contains(lower, "opus") ||
+		strings.Contains(lower, "haiku") || strings.Contains(lower, "3p") ||
+		lower == "o1" || lower == "o3" || strings.HasPrefix(lower, "o1-") || strings.HasPrefix(lower, "o3-") {
+		return "claude_gpt"
+	}
+	if strings.Contains(lower, "gemini") || strings.Contains(lower, "gemma") ||
+		strings.Contains(lower, "flash") || strings.Contains(lower, "pro") {
+		return "gemini"
+	}
+	return "unknown"
+}
+
 // CandidateAntigravityPaths returns standard probing locations across Linux and macOS.
 func CandidateAntigravityPaths() []string {
 	home, _ := os.UserHomeDir()
@@ -129,7 +237,6 @@ func CandidateAntigravityPaths() []string {
 		candidates = append(candidates,
 			// 1. Standard XDG user application directories (Recommended, no sudo)
 			filepath.Join(home, ".local", "bin", "antigravity"),
-			filepath.Join(home, ".local", "bin", "agy"),
 			filepath.Join(home, ".local", "share", "antigravity", "antigravity"),
 			filepath.Join(home, ".local", "share", "antigravity", "Antigravity-x64", "antigravity"),
 			filepath.Join(home, ".local", "share", "Antigravity", "antigravity"),
@@ -151,7 +258,6 @@ func CandidateAntigravityPaths() []string {
 	// 4. System-wide FHS locations (Installed via sudo into /opt or /usr/local/bin)
 	candidates = append(candidates,
 		"/usr/local/bin/antigravity",
-		"/usr/local/bin/agy",
 		"/opt/antigravity/antigravity",
 		"/opt/antigravity/Antigravity-x64/antigravity",
 		"/opt/Antigravity/antigravity",

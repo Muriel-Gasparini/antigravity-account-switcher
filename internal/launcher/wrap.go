@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/metrics"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/oauth"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/proxy"
@@ -25,14 +26,17 @@ import (
 
 // Config holds options for the Wrap supervisor.
 type Config struct {
-	Port         int
-	DBPath       string
-	TargetURL    string
-	PollInterval time.Duration
-	OpenBrowser  bool
-	Stdin        io.Reader
-	Stdout       io.Writer
-	Stderr       io.Writer
+	Port                     int
+	DBPath                   string
+	TargetURL                string
+	PollInterval             time.Duration
+	OpenBrowser              bool
+	ModelPrimary             string
+	ModelSecondary           string
+	FallbackSecondaryEnabled bool
+	Stdin                    io.Reader
+	Stdout                   io.Writer
+	Stderr                   io.Writer
 
 	// Injectable dependencies for unit and integration testing
 	DB     *sqlite.DB
@@ -42,6 +46,15 @@ type Config struct {
 
 // Option configures Wrap behavior.
 type Option func(*Config)
+
+// WithModelFallback configures the model fallback primary, secondary, and enabled flag.
+func WithModelFallback(primary, secondary string, enabled bool) Option {
+	return func(c *Config) {
+		c.ModelPrimary = primary
+		c.ModelSecondary = secondary
+		c.FallbackSecondaryEnabled = enabled
+	}
+}
 
 // WithPort sets the switcher listening port (0 allocates a random ephemeral port).
 func WithPort(p int) Option {
@@ -163,6 +176,8 @@ func Wrap(ctx context.Context, cmdArgs []string, opts ...Option) (int, error) {
 		metricsService *metrics.Service
 		oauthService   *oauth.OAuthService
 		proxyHandler   http.Handler
+		failoverEngine *proxy.FailoverEngine
+		appCfg         *config.Config
 	)
 
 	// 1. Initialize dependencies if server is not pre-injected
@@ -188,8 +203,34 @@ func Wrap(ctx context.Context, cmdArgs []string, opts ...Option) (int, error) {
 		metricsRepo = sqlite.NewMetricsRepository(db)
 		eventRepo = sqlite.NewEventRepository(db)
 
+		loadedCfg, _ := config.Load()
+		if loadedCfg != nil {
+			appCfg = loadedCfg
+		} else {
+			appCfg = config.DefaultConfig()
+		}
+		if cfg.Port > 0 {
+			appCfg.Port = cfg.Port
+		}
+		if cfg.TargetURL != "" {
+			appCfg.UpstreamURL = cfg.TargetURL
+		}
+		if cfg.ModelPrimary != "" {
+			appCfg.ModelPrimary = cfg.ModelPrimary
+		}
+		if cfg.ModelSecondary != "" {
+			appCfg.ModelSecondary = cfg.ModelSecondary
+		}
+		appCfg.FallbackSecondaryEnabled = cfg.FallbackSecondaryEnabled
+
 		broadcaster = proxy.NewBroadcaster(100)
-		failoverEngine := proxy.NewFailoverEngine(accRepo, broadcaster, eventRepo)
+		failoverEngine = proxy.NewFailoverEngine(
+			accRepo,
+			broadcaster,
+			eventRepo,
+			proxy.WithQuotaRepository(quotaRepo),
+			proxy.WithModelFallback(cfg.ModelPrimary, cfg.ModelSecondary, cfg.FallbackSecondaryEnabled),
+		)
 		oauthService = oauth.NewOAuthService(accRepo)
 
 		// Automatically import existing Antigravity login if pool is empty
@@ -254,6 +295,8 @@ func Wrap(ctx context.Context, cmdArgs []string, opts ...Option) (int, error) {
 			web.WithBindAddr("127.0.0.1"),
 			web.WithProxyHandler(proxyHandler),
 			web.WithPoller(poller),
+			web.WithFallbackConfigSetter(failoverEngine),
+			web.WithConfig(appCfg),
 		)
 		if err != nil {
 			if dbToClose != nil {
@@ -276,6 +319,20 @@ func Wrap(ctx context.Context, cmdArgs []string, opts ...Option) (int, error) {
 	if err := server.Start(); err != nil {
 		if strings.Contains(err.Error(), "address already in use") && cfg.Port > 0 {
 			fmt.Printf("Notice: Port %d is already in use, falling back to ephemeral port...\n", cfg.Port)
+			serverOpts := []web.Option{
+				web.WithPort(0),
+				web.WithBindAddr("127.0.0.1"),
+				web.WithProxyHandler(proxyHandler),
+			}
+			if poller != nil {
+				serverOpts = append(serverOpts, web.WithPoller(poller))
+			}
+			if failoverEngine != nil {
+				serverOpts = append(serverOpts, web.WithFallbackConfigSetter(failoverEngine))
+			}
+			if appCfg != nil {
+				serverOpts = append(serverOpts, web.WithConfig(appCfg))
+			}
 			serverInstance, fallbackErr := web.NewServer(
 				accRepo,
 				quotaRepo,
@@ -283,9 +340,7 @@ func Wrap(ctx context.Context, cmdArgs []string, opts ...Option) (int, error) {
 				broadcaster,
 				eventRepo,
 				oauthService,
-				web.WithPort(0),
-				web.WithBindAddr("127.0.0.1"),
-				web.WithProxyHandler(proxyHandler),
+				serverOpts...,
 			)
 			if fallbackErr == nil && serverInstance.Start() == nil {
 				server = serverInstance

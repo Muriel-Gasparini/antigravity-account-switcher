@@ -13,6 +13,8 @@ const (
 	EventTypeAccountSwitched EventType = "account_switched"
 	// EventTypeFailover429 denotes a failover triggered by an HTTP 429 response.
 	EventTypeFailover429 EventType = "failover_429"
+	// EventTypeModelFallback denotes an intra-account request payload rewrite to a secondary model tier.
+	EventTypeModelFallback EventType = "model_fallback"
 	// EventTypeQuotaExhausted denotes an account whose quota was marked exhausted.
 	EventTypeQuotaExhausted EventType = "quota_exhausted"
 	// EventTypeQuotaRestored denotes an account whose quota was restored after reset.

@@ -173,6 +173,10 @@ A CLI disponibiliza comandos para supervisão, troca manual e configuração:
   ```bash
   antigravity-account-switcher launch --port 1831
   ```
+- **Fallback Multi-Modelo no Momento da Execução:**
+  ```bash
+  antigravity-account-switcher launch --fallback-secondary --model-primary gemini-2.5-pro --model-secondary claude-3-7-sonnet
+  ```
 
 ---
 
@@ -192,6 +196,13 @@ antigravity-account-switcher config set port 1831
 
 # Ajustar intervalo de checagem de cotas em segundo plano
 antigravity-account-switcher config set quota_interval 60s
+
+# Configurar modelos primário e secundário de contingência
+antigravity-account-switcher config set model_primary gemini-2.5-pro
+antigravity-account-switcher config set model_secondary claude-3-7-sonnet
+
+# Habilitar o fallback intra-conta antes de alternar de conta
+antigravity-account-switcher config set fallback_secondary_enabled true
 ```
 
 ### Variáveis de Ambiente
@@ -203,6 +214,9 @@ antigravity-account-switcher config set quota_interval 60s
 | `ANTIGRAVITY_DB_PATH` | Caminho para o banco de dados SQLite (padrão: `~/.config/.../accounts.db`). |
 | `ANTIGRAVITY_CLIENT_ID` | Sobrescrita opcional do Client ID do Google Cloud Console. |
 | `ANTIGRAVITY_CLIENT_SECRET` | Sobrescrita opcional do Client Secret do Google Cloud Console. |
+| `ANTIGRAVITY_MODEL_PRIMARY` | Sobrescreve o modelo primário configurado. |
+| `ANTIGRAVITY_MODEL_SECONDARY` | Sobrescreve o modelo secundário de contingência. |
+| `ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED` | Habilita/desabilita o fallback intra-conta (`true`/`false`). |
 
 ---
 

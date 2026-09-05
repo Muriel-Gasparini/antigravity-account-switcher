@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -809,6 +810,64 @@ func TestProxyHandler_Reactive401TokenRefresh(t *testing.T) {
 	updatedAcc, _ := accountRepo.GetByID(context.Background(), "acc-react")
 	if updatedAcc.AccessToken != "newly-refreshed-token" {
 		t.Errorf("expected updated token saved to repo, got %s", updatedAcc.AccessToken)
+	}
+}
+
+func TestProxyHandler_ReactiveTokenRefresh_On401_RefreshErrorPreservesBody(t *testing.T) {
+	const errorBody = `{"error":{"code":401,"message":"Token revoked permanently"}}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(errorBody))
+	}))
+	defer upstream.Close()
+
+	_, accountRepo, metricsRepo, _ := setupTestDB(t)
+	acc := &domain.Account{
+		ID:           "acc-react-fail",
+		Email:        "reactfail@example.com",
+		AccessToken:  "revoked-token",
+		RefreshToken: "refresh-token-bad",
+		TokenExpiry:  time.Now().UTC().Add(1 * time.Hour),
+		IsActive:     true,
+		Status:       domain.AccountStatusActive,
+	}
+	_ = accountRepo.Create(context.Background(), acc)
+
+	refresher := TokenRefresherFunc(func(ctx context.Context, rt string) (string, time.Time, error) {
+		return "", time.Time{}, errors.New("refresh token invalid_grant")
+	})
+
+	handler, err := NewProxyHandler(
+		accountRepo,
+		WithTargetURL(upstream.URL),
+		WithMetricsRepository(metricsRepo),
+		WithTokenRefresher(refresher),
+	)
+	if err != nil {
+		t.Fatalf("NewProxyHandler failed: %v", err)
+	}
+
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, proxyServer.URL+"/v1internal:generateContent", strings.NewReader(`{}`))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected HTTP 401, got %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response body failed: %v", err)
+	}
+	if string(body) != errorBody {
+		t.Errorf("expected body %q, got %q", errorBody, string(body))
 	}
 }
 
