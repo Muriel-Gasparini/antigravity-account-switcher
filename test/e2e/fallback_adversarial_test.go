@@ -18,16 +18,15 @@ import (
 )
 
 // ============================================================================
-// Milestone M5 Phase 2: Tier 5 Adversarial Coverage Hardening
-// Empirical Adversarial Test Suite
+// Fallback Adversarial End-to-End Test Suite
 // ============================================================================
 
-// TestTier5_Adversarial_DirectSecondaryRequest429_RotatesAccount verifies that
+// TestFallback_Adversarial_DirectSecondaryRequest429_RotatesAccount verifies that
 // when a client explicitly requests the secondary model tier directly (without primary),
 // receiving an HTTP 429 on the secondary model immediately rotates to the next account
 // (instead of attempting another redundant intra-account fallback), and the newly activated
 // account preserves the requested secondary model without corrupting state.
-func TestTier5_Adversarial_DirectSecondaryRequest429_RotatesAccount(t *testing.T) {
+func TestFallback_Adversarial_DirectSecondaryRequest429_RotatesAccount(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 	t.Setenv("ANTIGRAVITY_MODEL_PRIMARY", defaultPrimaryModel)
@@ -108,9 +107,9 @@ func TestTier5_Adversarial_DirectSecondaryRequest429_RotatesAccount(t *testing.T
 	}
 }
 
-// TestTier5_Adversarial_CrossFamilyFallbackAndReplay verifies cross-provider category
+// TestFallback_Adversarial_CrossFamilyFallbackAndReplay verifies cross-provider category
 // failover (Claude/GPT primary -> Gemini Flash secondary -> Account rotation -> Claude primary replay).
-func TestTier5_Adversarial_CrossFamilyFallbackAndReplay(t *testing.T) {
+func TestFallback_Adversarial_CrossFamilyFallbackAndReplay(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 	t.Setenv("ANTIGRAVITY_MODEL_PRIMARY", "claude-3-5-sonnet")
@@ -159,11 +158,11 @@ func TestTier5_Adversarial_CrossFamilyFallbackAndReplay(t *testing.T) {
 	}
 }
 
-// TestTier5_Adversarial_TripleCascadingExhaustion_PoolDepleted verifies that when
+// TestFallback_Adversarial_TripleCascadingExhaustion_PoolDepleted verifies that when
 // all accounts in a multi-account pool exhaust all tiers (primary and secondary), the proxy
 // cleanly returns HTTP 429 to the client with the upstream error body without crashing,
 // hanging, or infinite looping.
-func TestTier5_Adversarial_TripleCascadingExhaustion_PoolDepleted(t *testing.T) {
+func TestFallback_Adversarial_TripleCascadingExhaustion_PoolDepleted(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 	t.Setenv("ANTIGRAVITY_MODEL_PRIMARY", "gemini-2.5-pro")
@@ -209,11 +208,11 @@ func TestTier5_Adversarial_TripleCascadingExhaustion_PoolDepleted(t *testing.T) 
 	}
 }
 
-// TestTier5_Adversarial_AntiStampede_MixedPrimarySecondaryBurst tests anti-stampede
+// TestFallback_Adversarial_AntiStampede_MixedPrimarySecondaryBurst tests anti-stampede
 // protection when 50 concurrent requests simultaneously hit an exhausted account with a mix of
 // primary (25) and secondary (25) model requests.
 // Verifies that exactly one account rotation occurs and all 50 requests succeed on Account 2.
-func TestTier5_Adversarial_AntiStampede_MixedPrimarySecondaryBurst(t *testing.T) {
+func TestFallback_Adversarial_AntiStampede_MixedPrimarySecondaryBurst(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 	t.Setenv("ANTIGRAVITY_MODEL_PRIMARY", "gemini-2.5-pro")
@@ -304,11 +303,11 @@ func TestTier5_Adversarial_AntiStampede_MixedPrimarySecondaryBurst(t *testing.T)
 	}
 }
 
-// TestTier5_Adversarial_AntiStampede_HighConcurrencyCancellations stress-tests the
+// TestFallback_Adversarial_AntiStampede_HighConcurrencyCancellations stress-tests the
 // FailoverEngine anti-stampede mutex when half of the concurrent callers cancel their context
 // prematurely while waiting on the lock. Verifies that cancellations do not poison or permanently
 // lock the mutex, and that surviving requests succeed normally.
-func TestTier5_Adversarial_AntiStampede_HighConcurrencyCancellations(t *testing.T) {
+func TestFallback_Adversarial_AntiStampede_HighConcurrencyCancellations(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 
@@ -394,11 +393,11 @@ func TestTier5_Adversarial_AntiStampede_HighConcurrencyCancellations(t *testing.
 	_ = healthResp.Body.Close()
 }
 
-// TestTier5_Adversarial_SSE_MidStreamDisconnect_TokenCapture tests that when a client
+// TestFallback_Adversarial_SSE_MidStreamDisconnect_TokenCapture tests that when a client
 // abruptly terminates an SSE streaming request immediately after the usageMetadata chunk
 // has been transmitted by upstream, the proxy's detached background context ensures
 // token metrics are successfully persisted in SQLite without being dropped.
-func TestTier5_Adversarial_SSE_MidStreamDisconnect_TokenCapture(t *testing.T) {
+func TestFallback_Adversarial_SSE_MidStreamDisconnect_TokenCapture(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 
@@ -466,10 +465,10 @@ func TestTier5_Adversarial_SSE_MidStreamDisconnect_TokenCapture(t *testing.T) {
 	}
 }
 
-// TestTier5_Adversarial_NonQuota403_NoFailover verifies that non-quota HTTP 403 errors
+// TestFallback_Adversarial_NonQuota403_NoFailover verifies that non-quota HTTP 403 errors
 // (such as PERMISSION_DENIED or ACCESS_BLOCKED) are passed directly through to the client
 // without triggering intra-account fallback or rotating accounts.
-func TestTier5_Adversarial_NonQuota403_NoFailover(t *testing.T) {
+func TestFallback_Adversarial_NonQuota403_NoFailover(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 
@@ -509,10 +508,10 @@ func TestTier5_Adversarial_NonQuota403_NoFailover(t *testing.T) {
 	}
 }
 
-// TestTier5_Adversarial_AmbiguousModelInQueryAndJSON tests edge cases where conflicting
+// TestFallback_Adversarial_AmbiguousModelInQueryAndJSON tests edge cases where conflicting
 // model parameters are present in both the URL query string and the JSON request body.
 // Verifies deterministic extraction priority and that rewriting properly rewrites both or respects priority.
-func TestTier5_Adversarial_AmbiguousModelInQueryAndJSON(t *testing.T) {
+func TestFallback_Adversarial_AmbiguousModelInQueryAndJSON(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 	t.Setenv("ANTIGRAVITY_MODEL_PRIMARY", "gemini-2.5-pro")
@@ -539,10 +538,10 @@ func TestTier5_Adversarial_AmbiguousModelInQueryAndJSON(t *testing.T) {
 	}
 }
 
-// TestTier5_Adversarial_RapidOscillatingFallback_20Iterations tests repeated sequential
+// TestFallback_Adversarial_RapidOscillatingFallback_20Iterations tests repeated sequential
 // fallback cycles on an account over 20 iterations, ensuring no memory corruption, goroutine leaks,
 // or state drift.
-func TestTier5_Adversarial_RapidOscillatingFallback_20Iterations(t *testing.T) {
+func TestFallback_Adversarial_RapidOscillatingFallback_20Iterations(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 	t.Setenv("ANTIGRAVITY_MODEL_PRIMARY", "gemini-2.5-pro")
@@ -580,11 +579,11 @@ func TestTier5_Adversarial_RapidOscillatingFallback_20Iterations(t *testing.T) {
 	}
 }
 
-// TestTier5_Adversarial_QuotaPoller_SyncAndStaleStateVerification explicitly evaluates
+// TestFallback_Adversarial_QuotaPoller_SyncAndStaleStateVerification explicitly evaluates
 // synchronization between background Poller updates in SQLite and in-memory FailoverEngine states.
 // Specifically: when an account experiences primary exhaustion and falls back to secondary,
 // does a subsequent quota replenishment by the poller restore the account to use the primary model?
-func TestTier5_Adversarial_QuotaPoller_SyncAndStaleStateVerification(t *testing.T) {
+func TestFallback_Adversarial_QuotaPoller_SyncAndStaleStateVerification(t *testing.T) {
 	env := setupE2EEnvironment(t, 20*time.Millisecond)
 	env.FailoverEngine.SetQuotaRepository(env.QuotaRepo)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
@@ -680,10 +679,10 @@ func TestTier5_Adversarial_QuotaPoller_SyncAndStaleStateVerification(t *testing.
 	t.Logf("CONFIRMED: Proxy dispatched primary model gemini-2.5-pro following quota restoration.")
 }
 
-// TestTier5_Adversarial_AllExhausted_ThenPollerRestores_AutoResume tests that when all accounts
+// TestFallback_Adversarial_AllExhausted_ThenPollerRestores_AutoResume tests that when all accounts
 // in the pool are exhausted, causing proxy requests to fail with 503/429, a subsequent Poller
 // auto-restore allows the proxy to seamlessly resume serving traffic on the restored account.
-func TestTier5_Adversarial_AllExhausted_ThenPollerRestores_AutoResume(t *testing.T) {
+func TestFallback_Adversarial_AllExhausted_ThenPollerRestores_AutoResume(t *testing.T) {
 	env := setupE2EEnvironment(t, 20*time.Millisecond)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 
@@ -744,10 +743,10 @@ func TestTier5_Adversarial_AllExhausted_ThenPollerRestores_AutoResume(t *testing
 	}
 }
 
-// TestTier5_Adversarial_Upstream500_503_NoFailover tests that HTTP 500 Internal Server Error
+// TestFallback_Adversarial_Upstream500_503_NoFailover tests that HTTP 500 Internal Server Error
 // and HTTP 503 Service Unavailable from upstream are forwarded cleanly to the client
 // without triggering model fallback or account rotation.
-func TestTier5_Adversarial_Upstream500_503_NoFailover(t *testing.T) {
+func TestFallback_Adversarial_Upstream500_503_NoFailover(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 
@@ -786,9 +785,9 @@ func TestTier5_Adversarial_Upstream500_503_NoFailover(t *testing.T) {
 	}
 }
 
-// TestTier5_Adversarial_SSE_MalformedDataLine_StreamPassesThrough tests that corrupted,
+// TestFallback_Adversarial_SSE_MalformedDataLine_StreamPassesThrough tests that corrupted,
 // non-JSON data lines in an SSE stream do not crash the stream parser or drop downstream chunks.
-func TestTier5_Adversarial_SSE_MalformedDataLine_StreamPassesThrough(t *testing.T) {
+func TestFallback_Adversarial_SSE_MalformedDataLine_StreamPassesThrough(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 
@@ -834,10 +833,10 @@ func TestTier5_Adversarial_SSE_MalformedDataLine_StreamPassesThrough(t *testing.
 	}
 }
 
-// TestTier5_Adversarial_StressHarness_100MixedRequests_RaceDetector executes 100 concurrent
+// TestFallback_Adversarial_StressHarness_100MixedRequests_RaceDetector executes 100 concurrent
 // requests exercising mixed operations (unary pro, unary flash, SSE streaming, 429 failover)
 // under data race detector (-race) scrutiny to guarantee 0 race conditions across the pipeline.
-func TestTier5_Adversarial_StressHarness_100MixedRequests_RaceDetector(t *testing.T) {
+func TestFallback_Adversarial_StressHarness_100MixedRequests_RaceDetector(t *testing.T) {
 	env := setupE2EEnvironment(t, 0)
 	t.Setenv("ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED", "true")
 

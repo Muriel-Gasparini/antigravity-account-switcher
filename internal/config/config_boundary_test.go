@@ -10,8 +10,8 @@ import (
 	"testing"
 )
 
-// TestChallenger_Config_BoundaryPorts tests port numbers at and beyond limits.
-func TestChallenger_Config_BoundaryPorts(t *testing.T) {
+// TestConfig_BoundaryPorts tests port numbers at and beyond limits.
+func TestConfig_BoundaryPorts(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
@@ -43,8 +43,8 @@ func TestChallenger_Config_BoundaryPorts(t *testing.T) {
 	}
 }
 
-// TestChallenger_Config_ModelUnicodeAndExtremeStrings tests unicode, emojis, RTL, and huge strings.
-func TestChallenger_Config_ModelUnicodeAndExtremeStrings(t *testing.T) {
+// TestConfig_ModelUnicodeAndExtremeStrings tests unicode, emojis, RTL, and huge strings.
+func TestConfig_ModelUnicodeAndExtremeStrings(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
@@ -59,6 +59,12 @@ func TestChallenger_Config_ModelUnicodeAndExtremeStrings(t *testing.T) {
 			name:      "ascii models",
 			primary:   "gemini-2.5-pro",
 			secondary: "claude-3-5-sonnet",
+			valid:     true,
+		},
+		{
+			name:      "same-family gemini models",
+			primary:   "gemini-2.5-pro",
+			secondary: "gemini-2.5-flash",
 			valid:     true,
 		},
 		{
@@ -136,8 +142,8 @@ func TestChallenger_Config_ModelUnicodeAndExtremeStrings(t *testing.T) {
 	}
 }
 
-// TestChallenger_Config_WhitespaceAndEmptyVariations tests various whitespace characters.
-func TestChallenger_Config_WhitespaceAndEmptyVariations(t *testing.T) {
+// TestConfig_WhitespaceAndEmptyVariations tests various whitespace characters.
+func TestConfig_WhitespaceAndEmptyVariations(t *testing.T) {
 	t.Parallel()
 
 	whitespaces := []string{
@@ -172,8 +178,8 @@ func TestChallenger_Config_WhitespaceAndEmptyVariations(t *testing.T) {
 	}
 }
 
-// TestChallenger_Config_CaseInsensitiveCollisions tests casing folding under various representations.
-func TestChallenger_Config_CaseInsensitiveCollisions(t *testing.T) {
+// TestConfig_CaseInsensitiveCollisions tests casing folding under various representations.
+func TestConfig_CaseInsensitiveCollisions(t *testing.T) {
 	t.Parallel()
 
 	pairs := []struct {
@@ -197,8 +203,8 @@ func TestChallenger_Config_CaseInsensitiveCollisions(t *testing.T) {
 	}
 }
 
-// TestChallenger_Config_MalformedJSONFiles tests how Load handles malformed, unreadable, or invalid JSON.
-func TestChallenger_Config_MalformedJSONFiles(t *testing.T) {
+// TestConfig_MalformedJSONFiles tests how Load handles malformed, unreadable, or invalid JSON.
+func TestConfig_MalformedJSONFiles(t *testing.T) {
 	malformedCases := []struct {
 		name    string
 		content string
@@ -229,8 +235,8 @@ func TestChallenger_Config_MalformedJSONFiles(t *testing.T) {
 	}
 }
 
-// TestChallenger_Config_EnvVarBoundaryAndFuzzing tests extreme and invalid env vars.
-func TestChallenger_Config_EnvVarBoundaryAndFuzzing(t *testing.T) {
+// TestConfig_EnvVarBoundaryAndFuzzing tests extreme and invalid env vars.
+func TestConfig_EnvVarBoundaryAndFuzzing(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("ANTIGRAVITY_CONFIG_DIR", tmpDir)
 
@@ -255,8 +261,8 @@ func TestChallenger_Config_EnvVarBoundaryAndFuzzing(t *testing.T) {
 	}
 }
 
-// TestChallenger_Config_ParseBool_Fuzz tests a comprehensive corpus of inputs for ParseBool.
-func TestChallenger_Config_ParseBool_Fuzz(t *testing.T) {
+// TestConfig_ParseBool_Fuzz tests a comprehensive corpus of inputs for ParseBool.
+func TestConfig_ParseBool_Fuzz(t *testing.T) {
 	t.Parallel()
 
 	validTrue := []string{
@@ -302,8 +308,8 @@ func TestChallenger_Config_ParseBool_Fuzz(t *testing.T) {
 	}
 }
 
-// TestChallenger_Config_ConcurrentAccess_Race runs 100 goroutines validating, default-loading, and parsing.
-func TestChallenger_Config_ConcurrentAccess_Race(t *testing.T) {
+// TestConfig_ConcurrentAccess_Race runs 100 goroutines validating, default-loading, and parsing.
+func TestConfig_ConcurrentAccess_Race(t *testing.T) {
 	t.Parallel()
 
 	var wg sync.WaitGroup

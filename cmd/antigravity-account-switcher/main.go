@@ -153,7 +153,7 @@ func runServe(args []string) {
 	cfg.ModelSecondary = *modelSecondary
 
 	if err := cfg.Validate(); err != nil {
-		if strings.Contains(err.Error(), "cannot be identical") || strings.Contains(err.Error(), "different providers") {
+		if strings.Contains(err.Error(), "cannot be identical") {
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 		} else {
 			fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
@@ -346,7 +346,7 @@ func runWrap(args []string) {
 	cfg.ModelSecondary = *modelSecondary
 
 	if err := cfg.Validate(); err != nil {
-		if strings.Contains(err.Error(), "cannot be identical") || strings.Contains(err.Error(), "different providers") {
+		if strings.Contains(err.Error(), "cannot be identical") {
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 		} else {
 			fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
@@ -587,7 +587,7 @@ func runLaunch(args []string) {
 	cfg.ModelSecondary = *modelSecondary
 
 	if err := cfg.Validate(); err != nil {
-		if strings.Contains(err.Error(), "cannot be identical") || strings.Contains(err.Error(), "different providers") {
+		if strings.Contains(err.Error(), "cannot be identical") {
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 		} else {
 			fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
@@ -780,7 +780,7 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 		}
 
 		if err := cfg.Validate(); err != nil {
-			if strings.Contains(err.Error(), "cannot be identical") || strings.Contains(err.Error(), "different providers") {
+			if strings.Contains(err.Error(), "cannot be identical") {
 				fmt.Fprintf(stderr, "Warning: %v\n", err)
 			} else {
 				fmt.Fprintf(stderr, "Configuration validation failed: %v\n", err)

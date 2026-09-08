@@ -12,10 +12,10 @@ import (
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/test/mocks"
 )
 
-// TestTier5_Adversarial_DefaultWiring_StaleWithoutManualSetQuotaRepo tests the production
+// TestFallback_Wiring_DefaultWiring_StaleWithoutManualSetQuotaRepo tests the production
 // behavior as constructed in cmd/main.go and wrap.go, where FailoverEngine is initialized
 // via proxy.NewFailoverEngine(accRepo, broadcaster, eventRepo) WITHOUT WithQuotaRepository.
-func TestTier5_Adversarial_DefaultWiring_StaleWithoutManualSetQuotaRepo(t *testing.T) {
+func TestFallback_Wiring_DefaultWiring_StaleWithoutManualSetQuotaRepo(t *testing.T) {
 	env := setupE2EEnvironment(t, 20*time.Millisecond)
 	// NOTE: Notice we do NOT call env.FailoverEngine.SetQuotaRepository(env.QuotaRepo) here!
 	// This mirrors cmd/antigravity-account-switcher/main.go line 173 and internal/launcher/wrap.go line 192.
@@ -99,9 +99,9 @@ func TestTier5_Adversarial_DefaultWiring_StaleWithoutManualSetQuotaRepo(t *testi
 	}
 }
 
-// TestTier5_Adversarial_ConfigFileOrCLIConfigNotWiredToFailoverEngine tests whether
+// TestFallback_Wiring_ConfigFileOrCLIConfigNotWiredToFailoverEngine tests whether
 // fallback configured via CLI flags or config file (without env vars) reaches FailoverEngine.
-func TestTier5_Adversarial_ConfigFileOrCLIConfigNotWiredToFailoverEngine(t *testing.T) {
+func TestFallback_Wiring_ConfigFileOrCLIConfigNotWiredToFailoverEngine(t *testing.T) {
 	// Replicate cmd/main.go lines 145-173:
 	// A user runs: antigravity-account-switcher serve --fallback-secondary=true
 	// but does NOT set ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED in the environment.

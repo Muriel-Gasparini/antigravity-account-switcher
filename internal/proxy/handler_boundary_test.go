@@ -21,12 +21,12 @@ import (
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/test/mocks"
 )
 
-// TestM4Challenger2_Boundary_EmptyRequestBody tests proxy behavior when receiving empty request bodies.
+// TestHandler_Boundary_EmptyRequestBody tests proxy behavior when receiving empty request bodies.
 // Boundary dimensions tested:
 // - Pass-through of empty body on GET and POST
 // - Predictive fallback when model is in URL path with an empty body
 // - Reactive 429 fallback when model is in URL path with an empty body
-func TestM4Challenger2_Boundary_EmptyRequestBody(t *testing.T) {
+func TestHandler_Boundary_EmptyRequestBody(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -134,8 +134,8 @@ func TestM4Challenger2_Boundary_EmptyRequestBody(t *testing.T) {
 	})
 }
 
-// TestM4Challenger2_Boundary_ChunkedTransferEncoding tests requests arriving with chunked transfer encoding.
-func TestM4Challenger2_Boundary_ChunkedTransferEncoding(t *testing.T) {
+// TestHandler_Boundary_ChunkedTransferEncoding tests requests arriving with chunked transfer encoding.
+func TestHandler_Boundary_ChunkedTransferEncoding(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -208,8 +208,8 @@ func TestM4Challenger2_Boundary_ChunkedTransferEncoding(t *testing.T) {
 	})
 }
 
-// TestM4Challenger2_Boundary_MalformedJSONBodies tests adversarial and broken JSON bodies.
-func TestM4Challenger2_Boundary_MalformedJSONBodies(t *testing.T) {
+// TestHandler_Boundary_MalformedJSONBodies tests adversarial and broken JSON bodies.
+func TestHandler_Boundary_MalformedJSONBodies(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -269,8 +269,8 @@ func TestM4Challenger2_Boundary_MalformedJSONBodies(t *testing.T) {
 	}
 }
 
-// TestM4Challenger2_Boundary_UnicodeModelNamesAndPayloads tests multibyte UTF-8 characters.
-func TestM4Challenger2_Boundary_UnicodeModelNamesAndPayloads(t *testing.T) {
+// TestHandler_Boundary_UnicodeModelNamesAndPayloads tests multibyte UTF-8 characters.
+func TestHandler_Boundary_UnicodeModelNamesAndPayloads(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -342,8 +342,8 @@ func TestM4Challenger2_Boundary_UnicodeModelNamesAndPayloads(t *testing.T) {
 	}
 }
 
-// TestM4Challenger2_Boundary_DeeplyNestedPayloads tests handling of deeply nested JSON structures (1,000 levels).
-func TestM4Challenger2_Boundary_DeeplyNestedPayloads(t *testing.T) {
+// TestHandler_Boundary_DeeplyNestedPayloads tests handling of deeply nested JSON structures (1,000 levels).
+func TestHandler_Boundary_DeeplyNestedPayloads(t *testing.T) {
 	const depth = 1000
 
 	t.Run("NestedModelKey_NotAtRoot_Ignored", func(t *testing.T) {
@@ -419,11 +419,11 @@ func TestM4Challenger2_Boundary_DeeplyNestedPayloads(t *testing.T) {
 	})
 }
 
-// TestM4Challenger2_Protocol_ContentLengthAndGetBody verifies HTTP protocol compliance:
+// TestHandler_Protocol_ContentLengthAndGetBody verifies HTTP protocol compliance:
 // 1. SynchronizeRequest and ApplyRewrittenBody set Content-Length header and req.ContentLength exactly.
 // 2. req.GetBody produces a fresh reader returning identical bytes across multiple calls.
 // 3. Outgoing upstream request matches byte size and provides functional GetBody.
-func TestM4Challenger2_Protocol_ContentLengthAndGetBody(t *testing.T) {
+func TestHandler_Protocol_ContentLengthAndGetBody(t *testing.T) {
 	testCases := []struct {
 		name        string
 		initialBody []byte
@@ -504,10 +504,10 @@ func TestM4Challenger2_Protocol_ContentLengthAndGetBody(t *testing.T) {
 	}
 }
 
-// TestM4Challenger2_UnexpectedUpstreamStatuses_NoFalseRotation verifies that non-quota upstream statuses
+// TestHandler_UnexpectedUpstreamStatuses_NoFalseRotation verifies that non-quota upstream statuses
 // (500, 502, non-quota 403, 302, 400, 404) are NEVER erroneously treated as quota exhaustion
 // and NEVER trigger account rotation or model fallback.
-func TestM4Challenger2_UnexpectedUpstreamStatuses_NoFalseRotation(t *testing.T) {
+func TestHandler_UnexpectedUpstreamStatuses_NoFalseRotation(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -599,8 +599,8 @@ func TestM4Challenger2_UnexpectedUpstreamStatuses_NoFalseRotation(t *testing.T) 
 	}
 }
 
-// TestM4Challenger2_MidStreamClientDisconnect tests client disconnection mid-stream and during request handling.
-func TestM4Challenger2_MidStreamClientDisconnect(t *testing.T) {
+// TestHandler_MidStreamClientDisconnect tests client disconnection mid-stream and during request handling.
+func TestHandler_MidStreamClientDisconnect(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -700,9 +700,9 @@ func TestM4Challenger2_MidStreamClientDisconnect(t *testing.T) {
 	})
 }
 
-// TestM4Challenger2_ConcurrentMixedWorkload_Race runs 20 concurrent goroutines executing 100 mixed requests
+// TestHandler_ConcurrentMixedWorkload_Race runs 20 concurrent goroutines executing 100 mixed requests
 // across empty bodies, chunked requests, Unicode, 500 errors, and 429 fallbacks under ThreadSanitizer.
-func TestM4Challenger2_ConcurrentMixedWorkload_Race(t *testing.T) {
+func TestHandler_ConcurrentMixedWorkload_Race(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -783,12 +783,12 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-// TestM4Challenger2_Protocol_OutReqGetBodyInServeHTTP directly intercepts the outbound
+// TestHandler_Protocol_OutReqGetBodyInServeHTTP directly intercepts the outbound
 // request (*http.Request) created in ProxyHandler.ServeHTTP to verify:
 // 1. Content-Length wire header matches len(currentBody)
 // 2. outReq.ContentLength field matches len(currentBody)
 // 3. outReq.GetBody() produces fresh, non-nil readers with identical bytes across repeated invocations.
-func TestM4Challenger2_Protocol_OutReqGetBodyInServeHTTP(t *testing.T) {
+func TestHandler_Protocol_OutReqGetBodyInServeHTTP(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -891,9 +891,9 @@ func TestM4Challenger2_Protocol_OutReqGetBodyInServeHTTP(t *testing.T) {
 	}
 }
 
-// TestM4Challenger2_UnexpectedUpstreamStatuses_Redirects tests that upstream HTTP 302 / 307
+// TestHandler_UnexpectedUpstreamStatuses_Redirects tests that upstream HTTP 302 / 307
 // redirects are passed through without triggering account rotation or model fallback.
-func TestM4Challenger2_UnexpectedUpstreamStatuses_Redirects(t *testing.T) {
+func TestHandler_UnexpectedUpstreamStatuses_Redirects(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -970,9 +970,9 @@ func TestM4Challenger2_UnexpectedUpstreamStatuses_Redirects(t *testing.T) {
 	}
 }
 
-// TestM4Challenger2_MidStreamClientDisconnect_BeforeHeaders tests client cancellation
+// TestHandler_MidStreamClientDisconnect_BeforeHeaders tests client cancellation
 // while waiting for slow upstream response (before headers are received).
-func TestM4Challenger2_MidStreamClientDisconnect_BeforeHeaders(t *testing.T) {
+func TestHandler_MidStreamClientDisconnect_BeforeHeaders(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 
@@ -1027,9 +1027,9 @@ func TestM4Challenger2_MidStreamClientDisconnect_BeforeHeaders(t *testing.T) {
 	t.Log("Client aborted cleanly before headers arrived without panics or leaks")
 }
 
-// TestM4Challenger2_Boundary_ChunkedReactiveFallback tests chunked transfer encoding
+// TestHandler_Boundary_ChunkedReactiveFallback tests chunked transfer encoding
 // combined with reactive HTTP 429 fallback and replay.
-func TestM4Challenger2_Boundary_ChunkedReactiveFallback(t *testing.T) {
+func TestHandler_Boundary_ChunkedReactiveFallback(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 

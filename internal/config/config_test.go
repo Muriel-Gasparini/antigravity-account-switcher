@@ -342,6 +342,24 @@ func TestConfig_Validate(t *testing.T) {
 			expectErr: false,
 		},
 		{
+			name: "fallback enabled with same family gemini models is valid",
+			modify: func(c *Config) {
+				c.FallbackSecondaryEnabled = true
+				c.ModelPrimary = "gemini-2.5-pro"
+				c.ModelSecondary = "gemini-2.5-flash"
+			},
+			expectErr: false,
+		},
+		{
+			name: "fallback enabled with same family claude models is valid",
+			modify: func(c *Config) {
+				c.FallbackSecondaryEnabled = true
+				c.ModelPrimary = "claude-3-7-sonnet"
+				c.ModelSecondary = "claude-3-5-sonnet"
+			},
+			expectErr: false,
+		},
+		{
 			name: "fallback enabled with empty model_primary",
 			modify: func(c *Config) {
 				c.FallbackSecondaryEnabled = true

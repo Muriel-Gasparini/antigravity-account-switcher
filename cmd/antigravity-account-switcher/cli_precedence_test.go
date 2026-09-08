@@ -12,12 +12,12 @@ import (
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
 )
 
-// TestChallenger_PrecedenceMatrix verifies the complete 4-tier precedence hierarchy:
+// TestCLI_PrecedenceMatrix verifies the complete 4-tier precedence hierarchy:
 // Tier 1 (Lowest): Built-in Defaults
 // Tier 2: ~/.config/antigravity-account-switcher/config.json
 // Tier 3: Environment Variables (ANTIGRAVITY_*)
 // Tier 4 (Highest): CLI Flags (--fallback-secondary, --model-primary, --model-secondary)
-func TestChallenger_PrecedenceMatrix(t *testing.T) {
+func TestCLI_PrecedenceMatrix(t *testing.T) {
 	// Helper to write config.json
 	writeConfigJSON := func(dir, primary, secondary string, fallback bool) {
 		cfg := map[string]any{
@@ -232,8 +232,8 @@ func TestChallenger_PrecedenceMatrix(t *testing.T) {
 	})
 }
 
-// TestChallenger_CLIFlag_BooleanPermutations tests all standard Go boolean flag formats
-func TestChallenger_CLIFlag_BooleanPermutations(t *testing.T) {
+// TestCLI_CLIFlag_BooleanPermutations tests all standard Go boolean flag formats
+func TestCLI_CLIFlag_BooleanPermutations(t *testing.T) {
 	cases := []struct {
 		name        string
 		flagArgs    []string
@@ -268,9 +268,9 @@ func TestChallenger_CLIFlag_BooleanPermutations(t *testing.T) {
 	}
 }
 
-// TestChallenger_DefaultBehaviorPreservation verifies that when fallback is disabled,
+// TestCLI_DefaultBehaviorPreservation verifies that when fallback is disabled,
 // existing systems and legacy setups behave exactly as before.
-func TestChallenger_DefaultBehaviorPreservation(t *testing.T) {
+func TestCLI_DefaultBehaviorPreservation(t *testing.T) {
 	t.Run("DefaultConfig_HasFallbackDisabled", func(t *testing.T) {
 		cfg := config.DefaultConfig()
 		if cfg.FallbackSecondaryEnabled {
@@ -378,9 +378,9 @@ func TestChallenger_DefaultBehaviorPreservation(t *testing.T) {
 	})
 }
 
-// TestChallenger_SubprocessBinaryExecution runs the actual compiled binary from bin/antigravity-account-switcher
+// TestCLI_SubprocessBinaryExecution runs the actual compiled binary from bin/antigravity-account-switcher
 // to test CLI flag and environment variable precedence in a real process environment.
-func TestChallenger_SubprocessBinaryExecution(t *testing.T) {
+func TestCLI_SubprocessBinaryExecution(t *testing.T) {
 	binPath := filepath.Join("..", "..", "bin", "antigravity-account-switcher")
 	if _, err := os.Stat(binPath); err != nil {
 		t.Skipf("binary %s not found; skipping binary test", binPath)
@@ -488,8 +488,8 @@ func TestChallenger_SubprocessBinaryExecution(t *testing.T) {
 	})
 }
 
-// TestChallenger_AdversarialEdgeCases tests edge cases, whitespace handling, and flag delimiters
-func TestChallenger_AdversarialEdgeCases(t *testing.T) {
+// TestCLI_AdversarialEdgeCases tests edge cases, whitespace handling, and flag delimiters
+func TestCLI_AdversarialEdgeCases(t *testing.T) {
 	t.Run("EnvVar_WhitespaceHandling", func(t *testing.T) {
 		dir := t.TempDir()
 		t.Setenv("ANTIGRAVITY_CONFIG_DIR", dir)

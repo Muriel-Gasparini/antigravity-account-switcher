@@ -97,7 +97,7 @@ func buildAdversarial10MBPayload(rootModelPos string, rootModel string) []byte {
 // 1. Stress-test ExtractModelFromJSON with 10MB adversarial payloads
 // ---------------------------------------------------------------------------
 
-func TestChallenger1_ExtractModelFromJSON_10MB_Adversarial(t *testing.T) {
+func TestModelRewriter_Stress_ExtractModelFromJSON_10MB(t *testing.T) {
 	positions := []string{"start", "middle", "end"}
 	const expectedModel = "gemini-2.5-pro"
 
@@ -147,7 +147,7 @@ func TestChallenger1_ExtractModelFromJSON_10MB_Adversarial(t *testing.T) {
 // 2. Stress-test RewriteModelInBody with 10MB adversarial payloads & Immutability
 // ---------------------------------------------------------------------------
 
-func TestChallenger1_RewriteModelInBody_10MB_Adversarial_And_Immutability(t *testing.T) {
+func TestModelRewriter_Stress_RewriteModelInBody_10MB(t *testing.T) {
 	positions := []string{"start", "middle", "end"}
 	const origModel = "gemini-2.5-pro"
 	const targetModel = "claude-3-7-sonnet"
@@ -236,7 +236,7 @@ func TestChallenger1_RewriteModelInBody_10MB_Adversarial_And_Immutability(t *tes
 // 3. Adversarial Escape Sequences & Backslash Parity Suite
 // ---------------------------------------------------------------------------
 
-func TestChallenger1_AdversarialEscapeSequences(t *testing.T) {
+func TestModelRewriter_Stress_EscapeSequences(t *testing.T) {
 	testCases := []struct {
 		name        string
 		jsonBody    string
@@ -347,7 +347,7 @@ func TestChallenger1_AdversarialEscapeSequences(t *testing.T) {
 // 4. Concurrency Safety & Race Stress Harness
 // ---------------------------------------------------------------------------
 
-func TestChallenger1_ConcurrencySafety_Race(t *testing.T) {
+func TestModelRewriter_Stress_ConcurrencySafety_Race(t *testing.T) {
 	const goroutines = 100
 	const iterations = 50
 
@@ -411,7 +411,7 @@ func TestChallenger1_ConcurrencySafety_Race(t *testing.T) {
 // 5. Malformed & Truncated Fuzzing
 // ---------------------------------------------------------------------------
 
-func TestChallenger1_Fuzz_TruncatedInputs(t *testing.T) {
+func TestModelRewriter_Stress_Fuzz_TruncatedInputs(t *testing.T) {
 	baseJSON := []byte(`{"model":"gemini-2.5-pro","contents":[{"role":"user","parts":[{"text":"hello world"}]}]}`)
 
 	// Test truncation at every single byte index from 0 to len(baseJSON)

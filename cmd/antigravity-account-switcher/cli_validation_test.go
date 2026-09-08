@@ -12,8 +12,8 @@ import (
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
 )
 
-// TestChallenger_CLI_ConfigErrors_ExitCode1 tests that all malformed/invalid config invocations return exit code 1.
-func TestChallenger_CLI_ConfigErrors_ExitCode1(t *testing.T) {
+// TestCLI_ConfigErrors_ExitCode1 tests that all malformed/invalid config invocations return exit code 1.
+func TestCLI_ConfigErrors_ExitCode1(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("ANTIGRAVITY_CONFIG_DIR", tmpDir)
 
@@ -68,8 +68,8 @@ func TestChallenger_CLI_ConfigErrors_ExitCode1(t *testing.T) {
 	}
 }
 
-// TestChallenger_CLI_ModelInvariantsUnderConfigSet tests model collision prevention during config set.
-func TestChallenger_CLI_ModelInvariantsUnderConfigSet(t *testing.T) {
+// TestCLI_ModelInvariantsUnderConfigSet tests model collision prevention during config set.
+func TestCLI_ModelInvariantsUnderConfigSet(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("ANTIGRAVITY_CONFIG_DIR", tmpDir)
 
@@ -125,8 +125,8 @@ func TestChallenger_CLI_ModelInvariantsUnderConfigSet(t *testing.T) {
 	_ = tmpDir
 }
 
-// TestChallenger_CLI_SubcommandFlags_ValidationErrors tests flag validation in serve/launch/wrap.
-func TestChallenger_CLI_SubcommandFlags_ValidationErrors(t *testing.T) {
+// TestCLI_SubcommandFlags_ValidationErrors tests flag validation in serve/launch/wrap.
+func TestCLI_SubcommandFlags_ValidationErrors(t *testing.T) {
 	subcommands := []string{"serve", "launch", "wrap"}
 
 	for _, sub := range subcommands {
@@ -160,8 +160,8 @@ func TestChallenger_CLI_SubcommandFlags_ValidationErrors(t *testing.T) {
 	}
 }
 
-// TestChallenger_CLI_ConcurrentExecuteConfig_Race runs 50 concurrent goroutines executing config operations.
-func TestChallenger_CLI_ConcurrentExecuteConfig_Race(t *testing.T) {
+// TestCLI_ConcurrentExecuteConfig_Race runs 50 concurrent goroutines executing config operations.
+func TestCLI_ConcurrentExecuteConfig_Race(t *testing.T) {
 	baseDir := t.TempDir()
 	t.Setenv("ANTIGRAVITY_CONFIG_DIR", baseDir)
 	var wg sync.WaitGroup
@@ -195,9 +195,9 @@ func TestChallenger_CLI_ConcurrentExecuteConfig_Race(t *testing.T) {
 	wg.Wait()
 }
 
-// TestChallenger_CLI_ConfigSet_PreservesMalformedFileOnLoadError verifies that if config.json
+// TestCLI_ConfigSet_PreservesMalformedFileOnLoadError verifies that if config.json
 // is malformed, 'config set' aborts with exit code 1 and does NOT overwrite the existing file with defaults.
-func TestChallenger_CLI_ConfigSet_PreservesMalformedFileOnLoadError(t *testing.T) {
+func TestCLI_ConfigSet_PreservesMalformedFileOnLoadError(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("ANTIGRAVITY_CONFIG_DIR", dir)
 	cfgFile := filepath.Join(dir, "config.json")
@@ -224,8 +224,8 @@ func TestChallenger_CLI_ConfigSet_PreservesMalformedFileOnLoadError(t *testing.T
 	}
 }
 
-// TestChallenger_CLI_ConfigSet_PortValidation tests port string parsing, trimming, suffixes, and bounds.
-func TestChallenger_CLI_ConfigSet_PortValidation(t *testing.T) {
+// TestCLI_ConfigSet_PortValidation tests port string parsing, trimming, suffixes, and bounds.
+func TestCLI_ConfigSet_PortValidation(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("ANTIGRAVITY_CONFIG_DIR", dir)
 
@@ -270,9 +270,9 @@ func TestChallenger_CLI_ConfigSet_PortValidation(t *testing.T) {
 	}
 }
 
-// TestChallenger_CLI_SubcommandFlags_PortAndTargetURL_ValidationErrors tests that CLI flags
+// TestCLI_SubcommandFlags_PortAndTargetURL_ValidationErrors tests that CLI flags
 // for --port and --target-url are caught by cfg.Validate() across serve, launch, and wrap.
-func TestChallenger_CLI_SubcommandFlags_PortAndTargetURL_ValidationErrors(t *testing.T) {
+func TestCLI_SubcommandFlags_PortAndTargetURL_ValidationErrors(t *testing.T) {
 	subcommands := []string{"serve", "launch", "wrap"}
 	for _, sub := range subcommands {
 		t.Run(sub+"_invalid_port", func(t *testing.T) {

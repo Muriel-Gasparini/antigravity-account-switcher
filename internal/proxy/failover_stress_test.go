@@ -19,8 +19,8 @@ import (
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/store/sqlite"
 )
 
-// m4StressTestEnv encapsulates an isolated proxy handler environment with a mock upstream.
-type m4StressTestEnv struct {
+// failoverStressTestEnv encapsulates an isolated proxy handler environment with a mock upstream.
+type failoverStressTestEnv struct {
 	db             *sqlite.DB
 	accountRepo    domain.AccountRepository
 	metricsRepo    domain.MetricsRepository
@@ -34,18 +34,18 @@ type m4StressTestEnv struct {
 	client         *http.Client
 }
 
-func newM4StressTestEnv(
+func newFailoverStressTestEnv(
 	t *testing.T,
 	upstreamHandler http.HandlerFunc,
 	primary, secondary string,
 	fallbackEnabled bool,
-) *m4StressTestEnv {
+) *failoverStressTestEnv {
 	t.Helper()
 
 	upstream := httptest.NewServer(upstreamHandler)
 	t.Cleanup(func() { upstream.Close() })
 
-	dbPath := filepath.Join(t.TempDir(), "m4_stress.db")
+	dbPath := filepath.Join(t.TempDir(), "failover_stress.db")
 	db, err := sqlite.Open(dbPath)
 	if err != nil {
 		t.Fatalf("failed to open test sqlite db: %v", err)
@@ -87,7 +87,7 @@ func newM4StressTestEnv(
 		IdleConnTimeout:     30 * time.Second,
 	}
 
-	return &m4StressTestEnv{
+	return &failoverStressTestEnv{
 		db:             db,
 		accountRepo:    accRepo,
 		metricsRepo:    metricsRepo,
@@ -102,7 +102,7 @@ func newM4StressTestEnv(
 	}
 }
 
-// TestM4Challenger1_Concurrent429_IntraAccountFallbackStampede tests 50 concurrent goroutines
+// TestFailover_Stress_Concurrent429_IntraAccountFallbackStampede tests 50 concurrent goroutines
 // sending requests for primary model (gemini-2.5-pro). Account A returns 429 on pro, but
 // 200 on secondary (gemini-2.5-flash).
 // Invariants verified:
@@ -110,7 +110,7 @@ func newM4StressTestEnv(
 // 2. Anti-stampede: Account A remains the active account (no premature rotation to Account B).
 // 3. Zero 429 error leakage to clients.
 // 4. All requests are rewritten to secondary model.
-func TestM4Challenger1_Concurrent429_IntraAccountFallbackStampede(t *testing.T) {
+func TestFailover_Stress_Concurrent429_IntraAccountFallbackStampede(t *testing.T) {
 	const concurrency = 50
 	ctx := context.Background()
 
@@ -151,7 +151,7 @@ func TestM4Challenger1_Concurrent429_IntraAccountFallbackStampede(t *testing.T) 
 		w.WriteHeader(http.StatusBadRequest)
 	})
 
-	env := newM4StressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", true)
+	env := newFailoverStressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", true)
 
 	now := time.Now().UTC()
 	accA := &domain.Account{
@@ -267,14 +267,14 @@ func TestM4Challenger1_Concurrent429_IntraAccountFallbackStampede(t *testing.T) 
 	}
 }
 
-// TestM4Challenger1_ConcurrentDoubleExhaustion_AntiStampedeRotation tests 40 concurrent
+// TestFailover_Stress_ConcurrentDoubleExhaustion_AntiStampedeRotation tests 40 concurrent
 // goroutines encountering total exhaustion on Account A (both Pro and Flash 429), rotating
 // to Account B (which returns 200 OK).
 // Invariants verified:
 // 1. Exactly ONE rotation occurs across all concurrent requests (Account A -> Account B).
 // 2. Account B is NOT rotated to Account C (no cascading stampede!).
 // 3. All requests complete successfully on Account B with primary model reset.
-func TestM4Challenger1_ConcurrentDoubleExhaustion_AntiStampedeRotation(t *testing.T) {
+func TestFailover_Stress_ConcurrentDoubleExhaustion_AntiStampedeRotation(t *testing.T) {
 	const concurrency = 40
 	ctx := context.Background()
 
@@ -313,7 +313,7 @@ func TestM4Challenger1_ConcurrentDoubleExhaustion_AntiStampedeRotation(t *testin
 		}
 	})
 
-	env := newM4StressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", true)
+	env := newFailoverStressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", true)
 
 	now := time.Now().UTC()
 	accA := &domain.Account{
@@ -431,13 +431,13 @@ func TestM4Challenger1_ConcurrentDoubleExhaustion_AntiStampedeRotation(t *testin
 	}
 }
 
-// TestM4Challenger1_ConcurrentDirectRotation_FallbackDisabled tests 40 concurrent goroutines
+// TestFailover_Stress_ConcurrentDirectRotation_FallbackDisabled tests 40 concurrent goroutines
 // when fallbackSecondaryEnabled = false. Account A fails with 429 on primary, rotating to Account B.
 // Invariants verified:
 // 1. Anti-stampede: Exactly 1 rotation occurs (Account A -> Account B). Account C untouched.
 // 2. Zero secondary fallback attempts made.
 // 3. All 40 requests succeed on Account B.
-func TestM4Challenger1_ConcurrentDirectRotation_FallbackDisabled(t *testing.T) {
+func TestFailover_Stress_ConcurrentDirectRotation_FallbackDisabled(t *testing.T) {
 	const concurrency = 40
 	ctx := context.Background()
 
@@ -482,7 +482,7 @@ func TestM4Challenger1_ConcurrentDirectRotation_FallbackDisabled(t *testing.T) {
 		}
 	})
 
-	env := newM4StressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", false)
+	env := newFailoverStressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", false)
 
 	now := time.Now().UTC()
 	accA := &domain.Account{
@@ -595,12 +595,12 @@ func TestM4Challenger1_ConcurrentDirectRotation_FallbackDisabled(t *testing.T) {
 	}
 }
 
-// TestM4Challenger1_ConcurrentPredictiveFallback_UnderCacheMutation tests 50 concurrent goroutines
+// TestFailover_Stress_ConcurrentPredictiveFallback_UnderCacheMutation tests 50 concurrent goroutines
 // executing predictive checks with cache misses while background goroutines mutate the quota cache.
 // Invariants verified:
 // 1. All 50 requests are predictively rewritten to gemini-2.5-flash with 0 pro requests dispatched.
 // 2. Zero data races between cache writers and predictive readers.
-func TestM4Challenger1_ConcurrentPredictiveFallback_UnderCacheMutation(t *testing.T) {
+func TestFailover_Stress_ConcurrentPredictiveFallback_UnderCacheMutation(t *testing.T) {
 	const concurrency = 50
 	ctx := context.Background()
 
@@ -627,7 +627,7 @@ func TestM4Challenger1_ConcurrentPredictiveFallback_UnderCacheMutation(t *testin
 		w.WriteHeader(http.StatusBadRequest)
 	})
 
-	env := newM4StressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", true)
+	env := newFailoverStressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", true)
 
 	now := time.Now().UTC()
 	acc := &domain.Account{
@@ -757,10 +757,10 @@ func TestM4Challenger1_ConcurrentPredictiveFallback_UnderCacheMutation(t *testin
 	}
 }
 
-// TestM4Challenger1_BufferIntegrity_ConcurrentRewritingUnderStress tests 30 concurrent
+// TestFailover_Stress_BufferIntegrity_ConcurrentRewritingUnderStress tests 30 concurrent
 // goroutines each sending distinct JSON payloads (up to 128KB) to ensure request buffers
 // are never cross-contaminated, truncated, or corrupted during failover rewriting.
-func TestM4Challenger1_BufferIntegrity_ConcurrentRewritingUnderStress(t *testing.T) {
+func TestFailover_Stress_BufferIntegrity_ConcurrentRewritingUnderStress(t *testing.T) {
 	const concurrency = 30
 	ctx := context.Background()
 
@@ -794,7 +794,7 @@ func TestM4Challenger1_BufferIntegrity_ConcurrentRewritingUnderStress(t *testing
 		_, _ = w.Write([]byte(`{"response":{"candidates":[{"content":{"parts":[{"text":"intact-ok"}]}}]}}`))
 	})
 
-	env := newM4StressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", true)
+	env := newFailoverStressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", true)
 
 	now := time.Now().UTC()
 	acc := &domain.Account{
@@ -888,13 +888,13 @@ func TestM4Challenger1_BufferIntegrity_ConcurrentRewritingUnderStress(t *testing
 	}
 }
 
-// TestM4Challenger1_FullPoolExhaustion_ConcurrentStampede tests 25 concurrent goroutines
+// TestFailover_Stress_FullPoolExhaustion_ConcurrentStampede tests 25 concurrent goroutines
 // when all accounts in the pool return 429 on all models.
 // Invariants verified:
 // 1. All 25 requests terminate promptly with HTTP 429 or 503 (no hanging/deadlocks).
 // 2. Retry count is bounded (no infinite retry loop).
 // 3. Pool exhaustion events emitted cleanly.
-func TestM4Challenger1_FullPoolExhaustion_ConcurrentStampede(t *testing.T) {
+func TestFailover_Stress_FullPoolExhaustion_ConcurrentStampede(t *testing.T) {
 	const concurrency = 25
 	ctx := context.Background()
 
@@ -904,7 +904,7 @@ func TestM4Challenger1_FullPoolExhaustion_ConcurrentStampede(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"code":429,"message":"global limit reached","status":"RESOURCE_EXHAUSTED"}}`))
 	})
 
-	env := newM4StressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", true)
+	env := newFailoverStressTestEnv(t, upstreamHandler, "gemini-2.5-pro", "gemini-2.5-flash", true)
 
 	now := time.Now().UTC()
 	acc1 := &domain.Account{
@@ -970,13 +970,13 @@ func TestM4Challenger1_FullPoolExhaustion_ConcurrentStampede(t *testing.T) {
 	}
 }
 
-// TestM4Challenger1_Broadcaster_HighConcurrencyChurn tests Broadcaster under extreme churn:
+// TestFailover_Stress_Broadcaster_HighConcurrencyChurn tests Broadcaster under extreme churn:
 // 40 subscribers subscribing and unsubscribing in rapid loops while 200 events are concurrently broadcasted.
 // Invariants verified:
 // 1. Zero panics from send on closed channel.
 // 2. Zero deadlocks.
 // 3. Subscribers cleanly terminate.
-func TestM4Challenger1_Broadcaster_HighConcurrencyChurn(t *testing.T) {
+func TestFailover_Stress_Broadcaster_HighConcurrencyChurn(t *testing.T) {
 	b := NewBroadcaster(100)
 	stop := make(chan struct{})
 

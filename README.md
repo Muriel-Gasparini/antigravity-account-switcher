@@ -180,6 +180,32 @@ The CLI provides commands for launch supervision, manual switching, and configur
 
 ---
 
+## Multi-Tier Model Fallback & Self-Healing
+
+The switcher includes an intelligent multi-tier contingency system to keep you coding uninterrupted:
+
+### 1. Intra-Account Model Fallback
+When your active account runs out of quota on a heavy model tier (e.g. `gemini-2.5-pro` or `claude-3-7-sonnet`), the switcher can automatically fall back to a lighter secondary model (such as `gemini-2.5-flash` or `claude-3-5-sonnet`) on the **same account** before rotating to the next account in the pool.
+- Supports both **cross-family** fallback (`claude-3-7-sonnet` -> `gemini-2.5-flash`) and **same-family** fallback (`gemini-2.5-pro` -> `gemini-2.5-flash`, which possess separate quota buckets in Google Cloud Code PA).
+- Includes **predictive bypass**: if quota telemetry indicates 0% remaining on the primary model, requests are proactively routed to the secondary tier without incurring an expensive HTTP 429 round-trip.
+- When background polling detects that primary quota has reset, traffic automatically reverts to your preferred primary model.
+
+### 2. Dashboard Web UI Configuration
+You can configure model fallback directly from the browser dashboard (`http://127.0.0.1:8080` or `launch --open`):
+- **Live Toggle**: Enable or disable intra-account secondary fallback on the fly.
+- **Model Discovery**: Click **Fetch Models** to query active `language_server` / Cloud Code PA endpoints and populate model selectors with currently supported models.
+- **Instant Hot-Reload**: Clicking **Save Settings** persists changes to `config.json` and immediately applies them to the running proxy engine without restarting Antigravity 2.0 or the daemon.
+
+### 3. Automatic 400 Thought Signature Recovery
+When switching between model providers (e.g. Claude <-> Gemini) or continuing multi-turn agent sessions, Google Cloud Code PA validates cryptographic HMAC thought signatures (`thought_signature` or Claude `thinking` blocks). Incompatible or stale thought blocks trigger `HTTP 400 ("Corrupted thought signature" or "Invalid signature in thinking block")`.
+
+**The switcher automatically recovers from this condition in-flight:**
+- The proxy intercepts the HTTP 400 response before it reaches the client.
+- It applies payload sanitization via structural visitors (`skip_thought_signature_validator` injection or HMAC thought block pruning) while preserving complete user chat history.
+- The request is instantly replayed in memory to Google Cloud Code PA, ensuring agent thinking continues seamlessly without crashing the editor or losing conversation context.
+
+---
+
 ## Configuration Reference
 
 Settings are stored in JSON format at `~/.config/antigravity-account-switcher/config.json`.

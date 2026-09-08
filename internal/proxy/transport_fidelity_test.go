@@ -16,10 +16,10 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Empirical Challenge 1: 60+ Model Categorization & Anti-Collision Suite
+// 1. 60+ Model Categorization & Anti-Collision Suite
 // ---------------------------------------------------------------------------
 
-func TestChallenger2_CategorizeModel_AntiCollisionMatrix(t *testing.T) {
+func TestTransport_Fidelity_CategorizeModel_AntiCollisionMatrix(t *testing.T) {
 	t.Parallel()
 
 	testMatrix := []struct {
@@ -165,10 +165,10 @@ func TestChallenger2_CategorizeModel_AntiCollisionMatrix(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Empirical Challenge 2: Wire Transport & http.Client Synchronization
+// 2. Wire Transport & http.Client Synchronization
 // ---------------------------------------------------------------------------
 
-func TestChallenger2_TransportSynchronization_WireWireFidelity(t *testing.T) {
+func TestTransport_Fidelity_WireWireFidelity(t *testing.T) {
 	// Start an actual TCP HTTP test server
 	var (
 		mu              sync.Mutex
@@ -341,10 +341,10 @@ func TestChallenger2_TransportSynchronization_WireWireFidelity(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Empirical Challenge 3: GetBody Reconstitution on Transport Retries / Redirects
+// 3. GetBody Reconstitution on Transport Retries / Redirects
 // ---------------------------------------------------------------------------
 
-func TestChallenger2_GetBody_TransportRetryAndRedirect(t *testing.T) {
+func TestTransport_Fidelity_GetBody_TransportRetryAndRedirect(t *testing.T) {
 	var attempts int
 	var receivedBodies [][]byte
 	var mu sync.Mutex
@@ -411,10 +411,10 @@ func TestChallenger2_GetBody_TransportRetryAndRedirect(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Empirical Challenge 4: Keep-Alive Connection Stream Pipelining (50 Requests)
+// 4. Keep-Alive Connection Stream Pipelining (50 Requests)
 // ---------------------------------------------------------------------------
 
-func TestChallenger2_KeepAlivePipelining_NoTruncationOrHang(t *testing.T) {
+func TestTransport_Fidelity_KeepAlivePipelining(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -467,10 +467,10 @@ func TestChallenger2_KeepAlivePipelining_NoTruncationOrHang(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Empirical Challenge 5: High Concurrency Stress Test (100 Goroutines)
+// 5. High Concurrency Stress Test (100 Goroutines)
 // ---------------------------------------------------------------------------
 
-func TestChallenger2_ConcurrentRewritingAndTransportStress(t *testing.T) {
+func TestTransport_Fidelity_ConcurrentRewritingAndTransportStress(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -557,10 +557,10 @@ func TestChallenger2_ConcurrentRewritingAndTransportStress(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Empirical Challenge 6: "pro" Substring Collision Analysis & Safeguards
+// 6. "pro" Substring Collision Analysis & Safeguards
 // ---------------------------------------------------------------------------
 
-func TestChallenger2_ProSubstringCollisions_Analysis(t *testing.T) {
+func TestTransport_Fidelity_ProSubstringCollisions_Analysis(t *testing.T) {
 	// Verify that Claude/GPT models with "pro" in the name are properly protected:
 	protectedClaudeGPT := []string{
 		"claude-pro",
