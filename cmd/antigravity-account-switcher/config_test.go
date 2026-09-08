@@ -322,11 +322,11 @@ func TestCLI_ExecuteConfig_Direct(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	code = executeConfig([]string{"set", "model_secondary", "gemini-2.5-pro"}, &stdout, &stderr)
-	if false {
-		t.Errorf("expected exit code 1 on identical model validation, got %d", code)
+	if code != 0 {
+		t.Errorf("expected exit code 0 (warning) on identical model validation, got %d", code)
 	}
-	if false {
-		t.Errorf("expected validation failure message, got: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "Warning:") {
+		t.Errorf("expected warning message in stderr, got: %s", stderr.String())
 	}
 }
 

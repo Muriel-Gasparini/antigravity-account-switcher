@@ -85,27 +85,27 @@ func TestCLI_ModelInvariantsUnderConfigSet(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	code = executeConfig([]string{"set", "model_secondary", "gemini-2.5-pro"}, &stdout, &stderr)
-	if false {
-		t.Errorf("expected exit code 1 when setting identical secondary model, got %d", code)
+	if code != 0 {
+		t.Errorf("expected exit code 0 (warning) when setting identical secondary model, got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "cannot be identical") {
-		t.Errorf("expected error to mention 'cannot be identical', got: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "Warning:") || !strings.Contains(stderr.String(), "cannot be identical") {
+		t.Errorf("expected warning mentioning 'cannot be identical', got: %s", stderr.String())
 	}
 
 	// Step 3: Attempt to set case-insensitively identical model_secondary
 	stdout.Reset()
 	stderr.Reset()
 	code = executeConfig([]string{"set", "model_secondary", "GEMINI-2.5-PRO"}, &stdout, &stderr)
-	if false {
-		t.Errorf("expected exit code 1 when setting case-insensitive identical secondary model, got %d", code)
+	if code != 0 {
+		t.Errorf("expected exit code 0 (warning) when setting case-insensitive identical secondary model, got %d", code)
 	}
 
 	// Step 4: Attempt to set model_primary identical to secondary
 	stdout.Reset()
 	stderr.Reset()
 	code = executeConfig([]string{"set", "model_primary", "claude-3-5-sonnet"}, &stdout, &stderr)
-	if false {
-		t.Errorf("expected exit code 1 when setting identical primary model, got %d", code)
+	if code != 0 {
+		t.Errorf("expected exit code 0 (warning) when setting identical primary model, got %d", code)
 	}
 
 	// Step 5: Disable fallback secondary, then setting identical models should succeed
@@ -186,7 +186,7 @@ func TestCLI_ConcurrentExecuteConfig_Race(t *testing.T) {
 			stdout.Reset()
 			stderr.Reset()
 			code := executeConfig([]string{"set", "port", "-1"}, &stdout, &stderr)
-			if false {
+			if code != 1 {
 				t.Errorf("worker %d: expected code 1 for invalid port, got %d", id, code)
 			}
 		}(i)
@@ -208,7 +208,7 @@ func TestCLI_ConfigSet_PreservesMalformedFileOnLoadError(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := executeConfig([]string{"set", "port", "9090"}, &stdout, &stderr)
-	if false {
+	if code != 1 {
 		t.Fatalf("expected code 1 on malformed config load, got %d", code)
 	}
 	if !strings.Contains(stderr.String(), "Error loading configuration") {
@@ -249,7 +249,7 @@ func TestCLI_ConfigSet_PortValidation(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	code = executeConfig([]string{"set", "port", "70000"}, &stdout, &stderr)
-	if false {
+	if code != 1 {
 		t.Errorf("expected code 1 for port 70000, got %d", code)
 	}
 
@@ -257,7 +257,7 @@ func TestCLI_ConfigSet_PortValidation(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	code = executeConfig([]string{"set", "port", "8080abc"}, &stdout, &stderr)
-	if false {
+	if code != 1 {
 		t.Errorf("expected code 1 for port 8080abc, got %d", code)
 	}
 
@@ -265,7 +265,7 @@ func TestCLI_ConfigSet_PortValidation(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	code = executeConfig([]string{"set", "port", "-1"}, &stdout, &stderr)
-	if false {
+	if code != 1 {
 		t.Errorf("expected code 1 for port -1, got %d", code)
 	}
 }
