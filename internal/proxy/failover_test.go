@@ -1557,3 +1557,116 @@ func TestFailoverEngine_MarkModelExhausted(t *testing.T) {
 		}
 	}
 }
+
+func TestFailoverEngine_PredictiveCheck_EmitsEventOnlyOncePerTransition(t *testing.T) {
+	acc := &domain.Account{ID: "acc-dedup", Email: "dedup@example.com", Status: domain.AccountStatusActive}
+	mockRepo := newMockAccountRepo()
+	mockRepo.addAccount(acc)
+	broadcaster := NewBroadcaster(20)
+	ch, unsub := broadcaster.Subscribe()
+	defer unsub()
+
+	engine := NewFailoverEngine(mockRepo, broadcaster, nil,
+		WithModelFallback("gemini-2.5-pro", "gemini-2.5-flash", true),
+	)
+
+	// Primary exhausted, secondary available
+	engine.UpdateQuotaCache(acc.ID, []*domain.QuotaBucket{
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-pro",
+			RemainingFraction: 0.0,
+			ResetTime:         time.Now().Add(1 * time.Hour),
+		},
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-flash",
+			RemainingFraction: 0.8,
+			ResetTime:         time.Now().Add(1 * time.Hour),
+		},
+	})
+
+	ctx := context.Background()
+
+	// 1st request -> should rewrite and emit event
+	rw, target, err := engine.PredictiveCheck(ctx, acc, "gemini-2.5-pro")
+	if err != nil || !rw || target != "gemini-2.5-flash" {
+		t.Fatalf("first check failed: rw=%v target=%s err=%v", rw, target, err)
+	}
+
+	// Verify event received
+	select {
+	case ev := <-ch:
+		if ev.Type != domain.EventTypeModelFallback {
+			t.Errorf("expected EventTypeModelFallback, got %v", ev.Type)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timed out waiting for first fallback event")
+	}
+
+	// 2nd through 5th sequential requests -> must rewrite, but NOT emit duplicate events
+	for i := 2; i <= 5; i++ {
+		rw, target, err := engine.PredictiveCheck(ctx, acc, "gemini-2.5-pro")
+		if err != nil || !rw || target != "gemini-2.5-flash" {
+			t.Fatalf("request %d check failed: rw=%v target=%s err=%v", i, rw, target, err)
+		}
+		select {
+		case ev := <-ch:
+			t.Fatalf("unexpected duplicate fallback event on request %d: %+v", i, ev)
+		default:
+			// Expected: no duplicate event
+		}
+	}
+
+	// Now restore primary quota
+	engine.UpdateQuotaCache(acc.ID, []*domain.QuotaBucket{
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-pro",
+			RemainingFraction: 0.5,
+			ResetTime:         time.Now().Add(1 * time.Hour),
+		},
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-flash",
+			RemainingFraction: 0.8,
+			ResetTime:         time.Now().Add(1 * time.Hour),
+		},
+	})
+
+	// Check that it does not rewrite when quota restored
+	rw, _, err = engine.PredictiveCheck(ctx, acc, "gemini-2.5-pro")
+	if err != nil || rw {
+		t.Fatalf("expected no rewrite after restore, got rw=%v err=%v", rw, err)
+	}
+
+	// Now exhaust primary quota again -> should emit event once again
+	engine.UpdateQuotaCache(acc.ID, []*domain.QuotaBucket{
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-pro",
+			RemainingFraction: 0.0,
+			ResetTime:         time.Now().Add(1 * time.Hour),
+		},
+		{
+			AccountID:         acc.ID,
+			BucketID:          "gemini-2.5-flash",
+			RemainingFraction: 0.8,
+			ResetTime:         time.Now().Add(1 * time.Hour),
+		},
+	})
+
+	rw, target, err = engine.PredictiveCheck(ctx, acc, "gemini-2.5-pro")
+	if err != nil || !rw || target != "gemini-2.5-flash" {
+		t.Fatalf("re-exhausted check failed: rw=%v target=%s err=%v", rw, target, err)
+	}
+
+	select {
+	case ev := <-ch:
+		if ev.Type != domain.EventTypeModelFallback {
+			t.Errorf("expected EventTypeModelFallback after re-exhaustion, got %v", ev.Type)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timed out waiting for re-exhaustion fallback event")
+	}
+}

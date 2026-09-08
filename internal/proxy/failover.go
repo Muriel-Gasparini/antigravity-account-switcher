@@ -85,6 +85,7 @@ type accountFallbackState struct {
 	primaryResetTime   time.Time
 	secondaryExhausted bool
 	lastFallback       time.Time
+	fallbackLogged     bool
 }
 
 // FailoverOption provides functional options to configure FailoverEngine.
@@ -294,6 +295,7 @@ func (f *FailoverEngine) UpdateQuotaCache(accountID string, buckets any) {
 				if f.matchesCachedBucket(b, f.primaryLower, f.primaryCat, f.primaryHasPro, f.primaryHasFlash, f.secondaryLower, f.secondaryCat, f.secondaryHasPro, f.secondaryHasFlash) {
 					if !b.isExhausted() || b.hasReset(now) || b.remainingFraction > 0.05 {
 						state.primaryExhausted = false
+						state.fallbackLogged = false
 						break
 					}
 				}
@@ -746,6 +748,7 @@ func (f *FailoverEngine) PredictiveCheck(
 			f.mu.Lock()
 			if st := f.accountStates[acc.ID]; st != nil {
 				st.primaryExhausted = false
+				st.fallbackLogged = false
 			}
 			f.mu.Unlock()
 			f.mu.RLock()
@@ -765,6 +768,7 @@ func (f *FailoverEngine) PredictiveCheck(
 					f.mu.Lock()
 					if st := f.accountStates[acc.ID]; st != nil {
 						st.primaryExhausted = false
+						st.fallbackLogged = false
 					}
 					f.mu.Unlock()
 					f.mu.RLock()
@@ -810,14 +814,37 @@ func (f *FailoverEngine) PredictiveCheck(
 		}
 	}
 
-	f.mu.RUnlock()
-
 	if !secondaryAvailable {
+		f.mu.RUnlock()
 		return false, requestedModel, nil
 	}
 
-	// Secondary is available: emit event if broadcaster/repo present and return rewrite
-	if f.eventBroadcaster != nil || f.eventRepo != nil {
+	shouldEmitEvent := false
+	if state == nil || !state.fallbackLogged {
+		f.mu.RUnlock()
+		f.mu.Lock()
+		st := f.accountStates[acc.ID]
+		if st == nil {
+			st = &accountFallbackState{
+				primaryExhausted: true,
+				lastFallback:     time.Now().UTC(),
+				fallbackLogged:   true,
+			}
+			f.accountStates[acc.ID] = st
+			shouldEmitEvent = true
+		} else if !st.fallbackLogged {
+			st.primaryExhausted = true
+			st.lastFallback = time.Now().UTC()
+			st.fallbackLogged = true
+			shouldEmitEvent = true
+		}
+		f.mu.Unlock()
+	} else {
+		f.mu.RUnlock()
+	}
+
+	// Secondary is available: emit event once per transition if broadcaster/repo present and return rewrite
+	if shouldEmitEvent && (f.eventBroadcaster != nil || f.eventRepo != nil) {
 		f.emitEvent(&domain.ProxyEvent{
 			Type:      domain.EventTypeModelFallback,
 			AccountID: acc.ID,
@@ -900,6 +927,7 @@ func (f *FailoverEngine) HandleExhaustion(
 		wasPrimaryExhausted := state.primaryExhausted
 		state.primaryExhausted = true
 		state.lastFallback = time.Now().UTC()
+		state.fallbackLogged = true
 
 		// Record primary reset time from cached/db buckets or default to 5 minutes
 		var resetTime time.Time
