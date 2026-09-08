@@ -1185,3 +1185,64 @@ func TestRewriteModelInBody_CrossVendorPayloadAdaptation(t *testing.T) {
 		t.Errorf("expected model_enum to be MODEL_PLACEHOLDER_M318, got %v", labelsGemini["model_enum"])
 	}
 }
+
+func TestRewriteModelInBody_MultiTurnGeminiThoughtsStrippedForClaude(t *testing.T) {
+	multiTurnGeminiReq := `{
+		"model": "gemini-3.8-flash-high",
+		"project": "aicode-consumers",
+		"request": {
+			"contents": [
+				{"role": "user", "parts": [{"text": "Hello, what is 2+2?"}]},
+				{"role": "model", "parts": [
+					{"thought": true, "text": "The user is asking a basic math question."},
+					{"thought": true, "thoughtSignature": "gemini-signature-xyz", "text": ""},
+					{"text": "2+2 is 4."}
+				]},
+				{"role": "user", "parts": [{"text": "Great, and plus 1?"}]}
+			],
+			"generationConfig": {
+				"maxOutputTokens": 65536,
+				"thinkingConfig": {
+					"includeThoughts": true,
+					"thinkingBudget": -1
+				}
+			},
+			"labels": {
+				"model_enum": "MODEL_PLACEHOLDER_M318",
+				"used_claude": "false",
+				"used_claude_conservative": "false",
+				"used_non_gemini_model": "false"
+			}
+		}
+	}`
+
+	rewritten, err := proxy.RewriteModelInBody([]byte(multiTurnGeminiReq), "claude-opus-4-6-thinking")
+	if err != nil {
+		t.Fatalf("Rewrite to Claude failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(rewritten, &parsed); err != nil {
+		t.Fatalf("Invalid JSON produced: %v", err)
+	}
+
+	req := parsed["request"].(map[string]any)
+	contents := req["contents"].([]any)
+	modelTurn := contents[1].(map[string]any)
+	parts := modelTurn["parts"].([]any)
+
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part after stripping thoughts, got %d: %v", len(parts), parts)
+	}
+
+	part := parts[0].(map[string]any)
+	if part["text"] != "2+2 is 4." {
+		t.Errorf("expected text '2+2 is 4.', got %v", part["text"])
+	}
+	if _, hasThought := part["thought"]; hasThought {
+		t.Errorf("part should not have 'thought' key: %v", part)
+	}
+	if _, hasSig := part["thoughtSignature"]; hasSig {
+		t.Errorf("part should not have 'thoughtSignature' key: %v", part)
+	}
+}
