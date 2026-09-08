@@ -27,12 +27,14 @@ type RawUsageMetadata struct {
 }
 
 // SSEChunk represents an event chunk supporting both nested (Google Cloud Code PA)
-// and direct root (Gemini API) usageMetadata schemas.
+// and direct root (Gemini API) usageMetadata schemas, plus modelVersion.
 type SSEChunk struct {
 	Response *struct {
 		UsageMetadata *RawUsageMetadata `json:"usageMetadata,omitempty"`
+		ModelVersion  string            `json:"modelVersion,omitempty"`
 	} `json:"response,omitempty"`
 	UsageMetadata *RawUsageMetadata `json:"usageMetadata,omitempty"`
+	ModelVersion  string            `json:"modelVersion,omitempty"`
 }
 
 // SSEInterceptor intercepts and streams Server-Sent Events (SSE) in real-time,
@@ -87,6 +89,7 @@ func StreamAndInterceptSSE(
 	}
 	reader := bufio.NewReader(bodyReader)
 	var capturedUsage *RawUsageMetadata
+	var capturedModelVersion string
 
 	// Resilience: In defer, if capturedUsage != nil, persist asynchronously
 	// with a detached context so mid-stream disconnects never drop token metrics.
@@ -107,29 +110,33 @@ func StreamAndInterceptSSE(
 				Timestamp:           time.Now().UTC(),
 			}
 
-			go func(m *domain.TokenMetric, u *RawUsageMetadata) {
+			go func(m *domain.TokenMetric, u *RawUsageMetadata, mVer string) {
 				detachedCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				_ = metricsRepo.Record(detachedCtx, m)
 
 				if eventBroadcaster != nil {
+					details := map[string]any{
+						"account_id":            accountID,
+						"request_path":          requestPath,
+						"prompt_tokens":         u.PromptTokenCount,
+						"candidates_tokens":     u.CandidatesTokenCount,
+						"total_tokens":          m.TotalTokens,
+						"cached_content_tokens": u.CachedContentTokenCount,
+						"thoughts_tokens":       u.ThoughtsTokenCount,
+					}
+					if mVer != "" {
+						details["model_version"] = mVer
+					}
 					eventBroadcaster.Broadcast(&domain.ProxyEvent{
 						Type:      domain.EventTypeTokensCaptured,
 						AccountID: accountID,
-						Message:   formatUsageMessage(u),
-						Details: map[string]any{
-							"account_id":            accountID,
-							"request_path":          requestPath,
-							"prompt_tokens":         u.PromptTokenCount,
-							"candidates_tokens":     u.CandidatesTokenCount,
-							"total_tokens":          m.TotalTokens,
-							"cached_content_tokens": u.CachedContentTokenCount,
-							"thoughts_tokens":       u.ThoughtsTokenCount,
-						},
+						Message:   formatUsageMessage(u, mVer),
+						Details:   details,
 						Timestamp: time.Now().UTC(),
 					})
 				}
-			}(metric, capturedUsage)
+			}(metric, capturedUsage, capturedModelVersion)
 		}
 	}()
 
@@ -140,16 +147,20 @@ func StreamAndInterceptSSE(
 
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
-			// Check for SSE data line containing usageMetadata before writing,
+			// Check for SSE data line containing usageMetadata or modelVersion before writing,
 			// ensuring that if the downstream write fails due to client abort,
 			// we have already parsed the usage metadata for persistence.
 			trimmed := bytes.TrimSpace(line)
 			if bytes.HasPrefix(trimmed, []byte("data:")) {
 				dataContent := bytes.TrimSpace(bytes.TrimPrefix(trimmed, []byte("data:")))
 				// Fast path: substring search before JSON unmarshaling
-				if bytes.Contains(dataContent, []byte("usageMetadata")) {
-					if usage := parseUsageMetadata(dataContent); usage != nil {
+				if bytes.Contains(dataContent, []byte("usageMetadata")) || bytes.Contains(dataContent, []byte("modelVersion")) {
+					usage, mVer := parseSSEData(dataContent)
+					if usage != nil {
 						capturedUsage = usage
+					}
+					if mVer != "" {
+						capturedModelVersion = mVer
 					}
 				}
 			}
@@ -186,19 +197,31 @@ func StreamAndIntercept(
 	return StreamAndInterceptSSE(context.Background(), w, upstreamBody, accountID, requestPath, metricsRepo, eventBroadcaster)
 }
 
-func parseUsageMetadata(data []byte) *RawUsageMetadata {
+func parseSSEData(data []byte) (*RawUsageMetadata, string) {
 	var chunk SSEChunk
 	if err := json.Unmarshal(data, &chunk); err != nil {
-		return nil
+		return nil, ""
 	}
-	if chunk.Response != nil && chunk.Response.UsageMetadata != nil {
-		return chunk.Response.UsageMetadata
+	var usage *RawUsageMetadata
+	var modelVersion string
+	if chunk.Response != nil {
+		usage = chunk.Response.UsageMetadata
+		modelVersion = chunk.Response.ModelVersion
 	}
-	return chunk.UsageMetadata
+	if usage == nil {
+		usage = chunk.UsageMetadata
+	}
+	if modelVersion == "" {
+		modelVersion = chunk.ModelVersion
+	}
+	return usage, modelVersion
 }
 
-func formatUsageMessage(u *RawUsageMetadata) string {
-	parts := make([]string, 0, 5)
+func formatUsageMessage(u *RawUsageMetadata, modelVersion ...string) string {
+	parts := make([]string, 0, 6)
+	if len(modelVersion) > 0 && modelVersion[0] != "" {
+		parts = append(parts, fmt.Sprintf("[%s]", modelVersion[0]))
+	}
 	if u.PromptTokenCount > 0 {
 		parts = append(parts, fmt.Sprintf("prompt: %d", u.PromptTokenCount))
 	}

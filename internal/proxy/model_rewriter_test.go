@@ -1246,3 +1246,98 @@ func TestRewriteModelInBody_MultiTurnGeminiThoughtsStrippedForClaude(t *testing.
 		t.Errorf("part should not have 'thoughtSignature' key: %v", part)
 	}
 }
+
+func TestRewriteModelInBody_GeminiTarget_ThoughtsStrippedAndSkipSignatureInjected(t *testing.T) {
+	multiTurnClaudeReq := `{
+		"model": "claude-opus-4-6-thinking",
+		"project": "aicode-consumers",
+		"request": {
+			"contents": [
+				{"role": "user", "parts": [{"text": "Can you run ls?"}]},
+				{"role": "model", "parts": [
+					{"thought": true, "text": "Thinking about the command..."},
+					{"functionCall": {"name": "run_command", "args": {"CommandLine": "ls"}}}
+				]},
+				{"role": "user", "parts": [
+					{"functionResponse": {"name": "run_command", "response": {"output": "file1.txt"}}}
+				]}
+			],
+			"labels": {
+				"used_claude": "true",
+				"used_claude_conservative": "true",
+				"used_non_gemini_model": "true"
+			}
+		}
+	}`
+
+	rewritten, err := proxy.RewriteModelInBody([]byte(multiTurnClaudeReq), "gemini-3.8-flash-high")
+	if err != nil {
+		t.Fatalf("Rewrite to Gemini failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(rewritten, &parsed); err != nil {
+		t.Fatalf("Invalid JSON produced: %v", err)
+	}
+
+	req := parsed["request"].(map[string]any)
+	contents := req["contents"].([]any)
+	modelTurn := contents[1].(map[string]any)
+	parts := modelTurn["parts"].([]any)
+
+	// Past thoughts must be stripped
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part after stripping thought, got %d: %v", len(parts), parts)
+	}
+
+	fnPart := parts[0].(map[string]any)
+	if _, hasFunc := fnPart["functionCall"]; !hasFunc {
+		t.Fatalf("expected functionCall part, got: %v", fnPart)
+	}
+	if fnPart["thoughtSignature"] != "skip_thought_signature_validator" {
+		t.Errorf("expected thoughtSignature 'skip_thought_signature_validator', got %v", fnPart["thoughtSignature"])
+	}
+
+	labels := req["labels"].(map[string]any)
+	if labels["used_claude"] != "false" {
+		t.Errorf("expected used_claude false, got %v", labels["used_claude"])
+	}
+}
+
+func TestSanitizeGeminiSignatures(t *testing.T) {
+	rawPayload := `{
+		"model": "gemini-3.8-flash-high",
+		"request": {
+			"contents": [
+				{"role": "user", "parts": [{"text": "Hello"}]},
+				{"role": "model", "parts": [
+					{"thought": true, "text": "Old thought from previous session"},
+					{"functionCall": {"name": "run_command"}, "thoughtSignature": "corrupted-or-expired-sig"}
+				]},
+				{"role": "user", "parts": [{"text": "Continue"}]}
+			]
+		}
+	}`
+
+	sanitized, err := proxy.SanitizeGeminiSignatures([]byte(rawPayload))
+	if err != nil {
+		t.Fatalf("SanitizeGeminiSignatures failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(sanitized, &parsed); err != nil {
+		t.Fatalf("Invalid JSON produced: %v", err)
+	}
+
+	contents := parsed["request"].(map[string]any)["contents"].([]any)
+	modelParts := contents[1].(map[string]any)["parts"].([]any)
+
+	if len(modelParts) != 1 {
+		t.Fatalf("expected 1 part, got %d: %v", len(modelParts), modelParts)
+	}
+
+	part := modelParts[0].(map[string]any)
+	if part["thoughtSignature"] != "skip_thought_signature_validator" {
+		t.Errorf("expected skip_thought_signature_validator, got %v", part["thoughtSignature"])
+	}
+}

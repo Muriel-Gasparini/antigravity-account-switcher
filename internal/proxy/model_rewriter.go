@@ -470,6 +470,41 @@ func RewriteModelInBody(body []byte, targetModel string) ([]byte, error) {
 							}
 						}
 					}
+				} else if targetCat == CategoryGemini {
+					// When targeting Gemini, past thought blocks from Claude/GPT or other sessions lack
+					// valid Google HMAC signatures, which causes HTTP 400 "Corrupted thought signature".
+					// In addition, any functionCall parts generated without Google signatures (e.g. from Claude)
+					// require Google's official sentinel "skip_thought_signature_validator" to bypass 400 errors.
+					if contents, ok := req["contents"].([]interface{}); ok {
+						for _, c := range contents {
+							if cMap, ok := c.(map[string]interface{}); ok {
+								if parts, ok := cMap["parts"].([]interface{}); ok {
+									var filteredParts []interface{}
+									for _, p := range parts {
+										if pMap, ok := p.(map[string]interface{}); ok {
+											if isThought, _ := pMap["thought"].(bool); isThought {
+												changed = true
+												continue
+											}
+											if _, hasFunc := pMap["functionCall"]; hasFunc {
+												sig, _ := pMap["thoughtSignature"].(string)
+												if sig == "" {
+													pMap["thoughtSignature"] = "skip_thought_signature_validator"
+													changed = true
+												}
+											}
+										}
+										filteredParts = append(filteredParts, p)
+									}
+									if len(filteredParts) == 0 && len(parts) > 0 {
+										filteredParts = append(filteredParts, map[string]interface{}{"text": ""})
+										changed = true
+									}
+									cMap["parts"] = filteredParts
+								}
+							}
+						}
+					}
 				}
 
 				if labels, ok := req["labels"].(map[string]interface{}); ok {
@@ -660,4 +695,71 @@ func ExtractModelFromRequest(r *http.Request, body []byte) (model string, catego
 		}
 	}
 	return "", CategoryUnknown, SourceNone
+}
+
+// SanitizeGeminiSignatures sanitizes all model turns in a Google Cloud Code PA / Gemini payload:
+// 1. Strips all 'thought: true' blocks from past turns.
+// 2. Forces 'thoughtSignature': 'skip_thought_signature_validator' on all 'functionCall' parts.
+// This is used for recovery when upstream returns HTTP 400 'Corrupted thought signature' or 'missing a thought_signature'.
+func SanitizeGeminiSignatures(body []byte) ([]byte, error) {
+	if len(body) == 0 || !bytes.Contains(body, []byte(`"request"`)) {
+		return body, nil
+	}
+
+	var doc map[string]interface{}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return body, err
+	}
+
+	req, ok := doc["request"].(map[string]interface{})
+	if !ok {
+		return body, nil
+	}
+
+	contents, ok := req["contents"].([]interface{})
+	if !ok {
+		return body, nil
+	}
+
+	changed := false
+	for _, c := range contents {
+		cMap, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		parts, ok := cMap["parts"].([]interface{})
+		if !ok {
+			continue
+		}
+		var filteredParts []interface{}
+		for _, p := range parts {
+			pMap, ok := p.(map[string]interface{})
+			if !ok {
+				filteredParts = append(filteredParts, p)
+				continue
+			}
+			if isThought, _ := pMap["thought"].(bool); isThought {
+				changed = true
+				continue
+			}
+			if _, hasFunc := pMap["functionCall"]; hasFunc {
+				if sig, _ := pMap["thoughtSignature"].(string); sig != "skip_thought_signature_validator" {
+					pMap["thoughtSignature"] = "skip_thought_signature_validator"
+					changed = true
+				}
+			}
+			filteredParts = append(filteredParts, p)
+		}
+		if len(filteredParts) == 0 && len(parts) > 0 {
+			filteredParts = append(filteredParts, map[string]interface{}{"text": ""})
+			changed = true
+		}
+		cMap["parts"] = filteredParts
+	}
+
+	if !changed {
+		return body, nil
+	}
+
+	return json.Marshal(doc)
 }

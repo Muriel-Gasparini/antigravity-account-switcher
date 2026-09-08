@@ -765,3 +765,84 @@ func TestPoolExhaustionVerbatim429(t *testing.T) {
 		t.Errorf("expected RESOURCE_EXHAUSTED in body, got: %s", string(body))
 	}
 }
+
+func TestHandler_ThoughtSignature400_AutoSanitizeRecovery(t *testing.T) {
+	env := newFallbackTestEnv(t, "gemini-3.8-flash-high", "claude-opus-4-6-thinking", true)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	acc := &domain.Account{
+		ID:          "acc-sig-1",
+		Email:       "sig1@example.com",
+		AccessToken: "token-sig-1",
+		IsActive:    true,
+		Status:      domain.AccountStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := env.accountRepo.Create(ctx, acc); err != nil {
+		t.Fatalf("create acc: %v", err)
+	}
+
+	// Mock Google: returns 400 "Corrupted thought signature." if thoughtSignature != "skip_thought_signature_validator",
+	// returns 200 OK when thoughtSignature == "skip_thought_signature_validator".
+	callCount := 0
+	env.mockGoogle.ConfigureAccount("token-sig-1", &mocks.AccountBehavior{
+		Email: "sig1@example.com",
+		CustomHandler: func(w http.ResponseWriter, r *http.Request) bool {
+			callCount++
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "skip_thought_signature_validator") {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":{"code":400,"message":"Corrupted thought signature.","status":"INVALID_ARGUMENT"}}`))
+				return true
+			}
+			// Sanitized retry succeeds with 200 OK
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Recovered successfully!\"}]}}],\"usageMetadata\":{\"promptTokenCount\":50,\"candidatesTokenCount\":10,\"totalTokenCount\":60},\"modelVersion\":\"gemini-3.8-flash\"}}\n\n"))
+			return true
+		},
+	})
+
+	initialPayload := `{
+		"model": "gemini-3.8-flash-high",
+		"request": {
+			"contents": [
+				{"role": "user", "parts": [{"text": "Hello"}]},
+				{"role": "model", "parts": [
+					{"thought": true, "text": "Old thought"},
+					{"functionCall": {"name": "run_command", "args": {"CommandLine": "ls"}}, "thoughtSignature": "bad-signature"}
+				]},
+				{"role": "user", "parts": [{"text": "Continue"}]}
+			]
+		}
+	}`
+
+	req, err := http.NewRequestWithContext(ctx, "POST", env.server.URL+"/v1internal:streamGenerateContent?alt=sse", strings.NewReader(initialPayload))
+	if err != nil {
+		t.Fatalf("create req: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := env.client.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected HTTP 200 after auto-sanitization, got %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(respBody), "Recovered successfully!") {
+		t.Errorf("expected response body to contain recovered text, got: %s", string(respBody))
+	}
+
+	if callCount != 2 {
+		t.Errorf("expected exactly 2 calls (initial 400 + retry 200), got %d", callCount)
+	}
+}

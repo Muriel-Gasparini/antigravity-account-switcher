@@ -721,6 +721,37 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if resp.StatusCode == http.StatusTooManyRequests {
 				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 				isExhausted = true
+			} else if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusNotFound {
+				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+				isThoughtSigErr := bytes.Contains(bodyBytes, []byte("Corrupted thought signature")) ||
+					bytes.Contains(bodyBytes, []byte("thought_signature")) ||
+					bytes.Contains(bodyBytes, []byte("thoughtSignature")) ||
+					bytes.Contains(bodyBytes, []byte("Invalid `signature` in `thinking` block"))
+
+				if isThoughtSigErr && CategorizeModel(currentModel) == CategoryGemini {
+					// Attempt in-flight sanitization using skip_thought_signature_validator
+					if sanitized, sErr := SanitizeGeminiSignatures(currentBody); sErr == nil && !bytes.Equal(sanitized, currentBody) {
+						_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 512*1024))
+						_ = resp.Body.Close()
+						currentBody = sanitized
+						buffered = &BufferedRequest{Body: currentBody}
+						SynchronizeRequest(r, currentBody, currentPath, currentQuery)
+						if h.eventBroadcaster != nil {
+							h.eventBroadcaster.Broadcast(&domain.ProxyEvent{
+								Type:      domain.EventTypeModelFallback,
+								AccountID: currentAcc.ID,
+								Message:   fmt.Sprintf("Sanitized thought signatures with skip_thought_signature_validator after 400 error on %s", currentModel),
+								Timestamp: time.Now().UTC(),
+							})
+						}
+						continue // Retry upstream with sanitized payload
+					}
+				}
+
+				// If thought signature error persists or cross-model error occurred, trigger failover/rotation
+				if isThoughtSigErr || currentModel != origModel {
+					isExhausted = true
+				}
 			} else if resp.StatusCode == http.StatusForbidden {
 				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 				if IsExhaustionResponse(resp.StatusCode, bodyBytes) {
