@@ -66,7 +66,7 @@ clean:
 ## install: Installs the binary to ~/.local/bin
 install: build
 	@mkdir -p $(HOME)/.local/bin
-	cp $(BINARY) $(HOME)/.local/bin/
+	install -m 755 $(BINARY) $(HOME)/.local/bin/
 	@echo "Installed $(BINARY) to $(HOME)/.local/bin/antigravity-account-switcher"
 
 ## uninstall: Removes the binary from ~/.local/bin

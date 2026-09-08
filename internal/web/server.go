@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/oauth"
 )
@@ -24,13 +25,15 @@ var embeddedDistFS embed.FS
 
 // ServerConfig holds configuration options for Server.
 type ServerConfig struct {
-	Port         int
-	BindAddr     string
-	Version      string
-	ProxyHandler http.Handler
-	Poller       QuotaPoller
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
+	Port                 int
+	BindAddr             string
+	Version              string
+	ProxyHandler         http.Handler
+	Poller               QuotaPoller
+	AppConfig            *config.Config
+	FallbackConfigSetter FallbackConfigSetter
+	ReadTimeout          time.Duration
+	WriteTimeout         time.Duration
 }
 
 // Option configures ServerConfig.
@@ -69,6 +72,16 @@ func WithWriteTimeout(d time.Duration) Option {
 // WithPoller configures the quota poller for on-demand quota refreshes.
 func WithPoller(p QuotaPoller) Option {
 	return func(c *ServerConfig) { c.Poller = p }
+}
+
+// WithConfig sets the app configuration instance.
+func WithConfig(cfg *config.Config) Option {
+	return func(c *ServerConfig) { c.AppConfig = cfg }
+}
+
+// WithFallbackConfigSetter sets the dynamic fallback setter for live proxy updates.
+func WithFallbackConfigSetter(setter FallbackConfigSetter) Option {
+	return func(c *ServerConfig) { c.FallbackConfigSetter = setter }
 }
 
 // Server serves both the Web UI/REST API dashboard and the local reverse proxy.
@@ -124,6 +137,12 @@ func NewServer(
 	if cfg.Poller != nil {
 		api.SetPoller(cfg.Poller)
 	}
+	if cfg.AppConfig != nil {
+		api.SetConfig(cfg.AppConfig)
+	}
+	if cfg.FallbackConfigSetter != nil {
+		api.SetFallbackConfigSetter(cfg.FallbackConfigSetter)
+	}
 
 	return &Server{
 		cfg:          cfg,
@@ -144,6 +163,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(path, "/api/accounts") {
 		s.api.HandleAccounts(w, r)
+		return
+	}
+	if path == "/api/config" {
+		s.api.HandleConfig(w, r)
+		return
+	}
+	if path == "/api/models" {
+		s.api.HandleModels(w, r)
 		return
 	}
 	if path == "/api/quota/refresh" {

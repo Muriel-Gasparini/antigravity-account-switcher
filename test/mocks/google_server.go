@@ -92,6 +92,7 @@ type AccountBehavior struct {
 	Usage             *UsageMetadata
 	QuotaBuckets      []QuotaSummaryBucket
 	StreamDelay       time.Duration
+	CustomHandler     func(w http.ResponseWriter, r *http.Request) bool
 }
 
 // MockGoogleServer simulates Google Cloud Code PA (daily-cloudcode-pa.googleapis.com)
@@ -139,6 +140,7 @@ func NewMockGoogleServer() *MockGoogleServer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1internal:streamGenerateContent", m.handleStreamGenerateContent)
 	mux.HandleFunc("/v1internal:generateContent", m.handleStreamGenerateContent)
+	mux.HandleFunc("/v1internal/models/", m.handleStreamGenerateContent)
 	mux.HandleFunc("/v1internal:retrieveUserQuotaSummary", m.handleRetrieveUserQuotaSummary)
 	mux.HandleFunc("/v1internal:retrieveUserQuota", m.handleRetrieveUserQuota)
 	mux.HandleFunc("/token", m.handleOAuthToken)
@@ -260,6 +262,12 @@ func (m *MockGoogleServer) getBehavior(token string) *AccountBehavior {
 func (m *MockGoogleServer) handleStreamGenerateContent(w http.ResponseWriter, r *http.Request) {
 	_, bearer := m.record(r)
 	b := m.getBehavior(bearer)
+
+	if b.CustomHandler != nil {
+		if b.CustomHandler(w, r) {
+			return
+		}
+	}
 
 	m.mu.Lock()
 	if b.FailoverRemaining > 0 {

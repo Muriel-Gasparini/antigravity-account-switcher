@@ -173,6 +173,36 @@ A CLI disponibiliza comandos para supervisão, troca manual e configuração:
   ```bash
   antigravity-account-switcher launch --port 1831
   ```
+- **Fallback Multi-Modelo no Momento da Execução:**
+  ```bash
+  antigravity-account-switcher launch --fallback-secondary --model-primary gemini-2.5-pro --model-secondary claude-3-7-sonnet
+  ```
+
+---
+
+## Fallback Multi-Modelo & Auto-Recuperação
+
+O switcher conta com um sistema inteligente de contingência multi-modelo para evitar interrupções no fluxo de desenvolvimento:
+
+### 1. Fallback Intra-Conta de Modelos
+Quando a cota do modelo principal se esgota (ex.: `gemini-2.5-pro` ou `claude-3-7-sonnet`), o switcher pode recorrer automaticamente a um modelo secundário mais leve (como `gemini-2.5-flash` ou `claude-3-5-sonnet`) na **mesma conta** antes de alternar para a próxima conta do pool.
+- Suporta tanto fallback **entre famílias** (`claude-3-7-sonnet` -> `gemini-2.5-flash`) quanto **dentro da mesma família** (`gemini-2.5-pro` -> `gemini-2.5-flash`, que possuem limites de cota independentes no Google Cloud Code PA).
+- Conta com **otimização preditiva**: se a telemetria indicar 0% de cota restante no modelo primário, as requisições são redirecionadas proativamente sem a penalidade de latência de esperar por um erro HTTP 429.
+- Assim que o monitor em segundo plano detecta a restauração da cota primária, as requisições voltam automaticamente ao modelo principal configurado.
+
+### 2. Configuração pelo Dashboard Web
+Você pode gerenciar as preferências de modelos diretamente pelo navegador (`http://127.0.0.1:8080` ou `launch --open`):
+- **Toggle em Tempo Real**: Ative ou desative o fallback intra-conta instantaneamente.
+- **Descoberta de Modelos**: Clique em **Buscar Modelos** para inspecionar os endpoints do `language_server` / Cloud Code PA e listar todos os modelos disponíveis.
+- **Recarregamento Sem Reiniciar**: Ao salvar as configurações, o `config.json` é atualizado e o motor de proxy aplica as mudanças imediatamente sem necessidade de reiniciar o Antigravity 2.0 ou o daemon.
+
+### 3. Recuperação Automática de Assinatura de Pensamento (HTTP 400)
+Ao alternar entre provedores de modelos (ex.: Claude <-> Gemini) ou em sessões de múltiplos turnos, o Google Cloud Code PA valida blocos criptográficos HMAC de raciocínio (`thought_signature` ou blocos de `thinking` do Claude). Assinaturas incompatíveis ou corrompidas causam erro `HTTP 400 ("Corrupted thought signature" ou "Invalid signature in thinking block")`.
+
+**O switcher recupera esse erro automaticamente em tempo real:**
+- O proxy intercepta a resposta HTTP 400 antes que ela chegue ao cliente.
+- Aplica sanitização transparente no payload (injetando `skip_thought_signature_validator` ou limpando blocos de HMAC incompatíveis) preservando todo o histórico de conversação do usuário.
+- Reenvia a requisição imediatamente em memória para o Google Cloud Code PA, garantindo que o agente continue pensando sem travar o editor ou interromper a sessão de código.
 
 ---
 
@@ -192,6 +222,13 @@ antigravity-account-switcher config set port 1831
 
 # Ajustar intervalo de checagem de cotas em segundo plano
 antigravity-account-switcher config set quota_interval 60s
+
+# Configurar modelos primário e secundário de contingência
+antigravity-account-switcher config set model_primary gemini-2.5-pro
+antigravity-account-switcher config set model_secondary claude-3-7-sonnet
+
+# Habilitar o fallback intra-conta antes de alternar de conta
+antigravity-account-switcher config set fallback_secondary_enabled true
 ```
 
 ### Variáveis de Ambiente
@@ -203,6 +240,9 @@ antigravity-account-switcher config set quota_interval 60s
 | `ANTIGRAVITY_DB_PATH` | Caminho para o banco de dados SQLite (padrão: `~/.config/.../accounts.db`). |
 | `ANTIGRAVITY_CLIENT_ID` | Sobrescrita opcional do Client ID do Google Cloud Console. |
 | `ANTIGRAVITY_CLIENT_SECRET` | Sobrescrita opcional do Client Secret do Google Cloud Console. |
+| `ANTIGRAVITY_MODEL_PRIMARY` | Sobrescreve o modelo primário configurado. |
+| `ANTIGRAVITY_MODEL_SECONDARY` | Sobrescreve o modelo secundário de contingência. |
+| `ANTIGRAVITY_FALLBACK_SECONDARY_ENABLED` | Habilita/desabilita o fallback intra-conta (`true`/`false`). |
 
 ---
 

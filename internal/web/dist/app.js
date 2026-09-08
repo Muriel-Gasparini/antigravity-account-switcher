@@ -8,6 +8,12 @@
   let eventSource = null;
   let rawTimelineData = [];
   let rawAccountsData = [];
+  let rawModelsData = [];
+  let currentAppConfig = {
+    model_primary: 'gemini-2.5-pro',
+    model_secondary: 'gemini-2.5-flash',
+    fallback_secondary_enabled: false
+  };
   let allEvents = [];
   let currentLogFilter = 'all';
   let isUserScrolledUp = false;
@@ -27,6 +33,17 @@
   const chartXAxis = document.getElementById('chart-x-axis');
   const gridMaxLabel = document.getElementById('grid-max-label');
   const gridMidLabel = document.getElementById('grid-mid-label');
+
+  // Model Fallback DOM Elements
+  const fallbackToggle = document.getElementById('fallback-enabled-toggle');
+  const fallbackToggleStatus = document.getElementById('fallback-toggle-status');
+  const selectModelPrimary = document.getElementById('select-model-primary');
+  const selectModelSecondary = document.getElementById('select-model-secondary');
+  const btnSaveConfig = document.getElementById('btn-save-config');
+  const btnRefreshModels = document.getElementById('btn-refresh-models');
+  const refreshModelsIcon = document.getElementById('refresh-models-icon');
+  const modelsSourceBadge = document.getElementById('models-source-badge');
+  const configStatusMsg = document.getElementById('config-status-msg');
 
   // =========================================================================
   // Formatting & Utility Helpers
@@ -544,6 +561,254 @@
   }
 
   // =========================================================================
+  // Model Fallback Configuration & Dynamic Discovery
+  // =========================================================================
+
+  async function fetchConfig() {
+    try {
+      const res = await fetch('/api/config');
+      if (!res.ok) return;
+      const data = await res.json();
+      currentAppConfig = data;
+
+      if (fallbackToggle) {
+        fallbackToggle.checked = Boolean(data.fallback_secondary_enabled);
+        updateToggleStatusText(Boolean(data.fallback_secondary_enabled));
+      }
+      if (selectModelPrimary && data.model_primary) {
+        selectModelPrimary.value = data.model_primary;
+      }
+      if (selectModelSecondary && data.model_secondary) {
+        selectModelSecondary.value = data.model_secondary;
+      }
+    } catch (err) {
+      console.warn('Failed to fetch config:', err);
+    }
+  }
+
+  function updateToggleStatusText(isEnabled) {
+    if (!fallbackToggleStatus) return;
+    if (isEnabled) {
+      fallbackToggleStatus.textContent = 'Enabled';
+      fallbackToggleStatus.className = 'toggle-label-text is-enabled';
+    } else {
+      fallbackToggleStatus.textContent = 'Disabled';
+      fallbackToggleStatus.className = 'toggle-label-text';
+    }
+  }
+
+  async function fetchModels() {
+    if (refreshModelsIcon) {
+      refreshModelsIcon.style.transition = 'transform 0.5s ease-in-out';
+      refreshModelsIcon.style.transform = 'rotate(360deg)';
+    }
+
+    try {
+      const res = await fetch('/api/models');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      rawModelsData = Array.isArray(data.models) ? data.models : [];
+
+      if (modelsSourceBadge) {
+        if (data.source === 'language_server') {
+          modelsSourceBadge.textContent = 'Antigravity IDE (Live)';
+          modelsSourceBadge.className = 'badge badge-success mono';
+          modelsSourceBadge.title = 'Discovered dynamically from running language_server';
+        } else if (data.source === 'quota_buckets') {
+          modelsSourceBadge.textContent = 'Quota Buckets';
+          modelsSourceBadge.className = 'badge badge-info mono';
+        } else {
+          modelsSourceBadge.textContent = 'Standard Catalog';
+          modelsSourceBadge.className = 'badge badge-neutral mono';
+        }
+      }
+
+      populateModelSelects();
+    } catch (err) {
+      console.warn('Failed to fetch models:', err);
+      if (modelsSourceBadge) {
+        modelsSourceBadge.textContent = 'Catalog (Offline)';
+        modelsSourceBadge.className = 'badge badge-warning mono';
+      }
+    } finally {
+      setTimeout(() => {
+        if (refreshModelsIcon) {
+          refreshModelsIcon.style.transition = 'none';
+          refreshModelsIcon.style.transform = 'rotate(0deg)';
+        }
+      }, 500);
+    }
+  }
+
+  function getModelCategory(modelId) {
+    const found = rawModelsData.find(m => m.id === modelId);
+    if (found && found.category) return found.category;
+    const lower = (modelId || '').toLowerCase();
+    if (lower.includes('claude') || lower.includes('gpt') || lower.includes('sonnet') || lower.includes('opus') || lower.includes('haiku') || lower.includes('3p')) {
+      return 'claude_gpt';
+    }
+    return 'gemini';
+  }
+
+  function updateSecondaryOptions() {
+    if (!selectModelPrimary || !selectModelSecondary) return;
+    const primaryVal = selectModelPrimary.value;
+    const primaryCat = getModelCategory(primaryVal);
+    const prevSecondary = selectModelSecondary.value || currentAppConfig.model_secondary;
+
+    const allowedModels = rawModelsData.filter(m => {
+      const cat = m.category || getModelCategory(m.id);
+      return cat !== primaryCat;
+    });
+
+    let html = '';
+    const label = primaryCat === 'gemini' ? 'Claude & GPT (Standby Fallback)' : 'Google Gemini (Standby Fallback)';
+    html += `<optgroup label="${label}">`;
+    allowedModels.forEach(m => {
+      const isSelected = m.id === prevSecondary ? 'selected' : '';
+      const star = m.recommended ? ' ★' : '';
+      html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}${star}</option>`;
+    });
+    html += '</optgroup>';
+
+    selectModelSecondary.innerHTML = html;
+
+    // Validate if previously selected model is still in the new option list
+    const stillValid = Array.from(selectModelSecondary.options).some(opt => opt.value === prevSecondary);
+    if (!stillValid && selectModelSecondary.options.length > 0) {
+      selectModelSecondary.selectedIndex = 0;
+    }
+  }
+
+  function populateModelSelects() {
+    if (!selectModelPrimary || !selectModelSecondary) return;
+
+    const currentPrimary = currentAppConfig.model_primary || selectModelPrimary.value;
+    const currentSecondary = currentAppConfig.model_secondary || selectModelSecondary.value;
+
+    const geminiModels = [];
+    const claudeGptModels = [];
+    const otherModels = [];
+
+    rawModelsData.forEach(m => {
+      if (m.category === 'gemini') {
+        geminiModels.push(m);
+      } else if (m.category === 'claude_gpt') {
+        claudeGptModels.push(m);
+      } else {
+        otherModels.push(m);
+      }
+    });
+
+    function buildOptionsHtml(selectedVal) {
+      let html = '';
+
+      if (geminiModels.length > 0) {
+        html += '<optgroup label="Google Gemini">';
+        geminiModels.forEach(m => {
+          const isSelected = m.id === selectedVal ? 'selected' : '';
+          const star = m.recommended ? ' ★' : '';
+          html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}${star}</option>`;
+        });
+        html += '</optgroup>';
+      }
+
+      if (claudeGptModels.length > 0) {
+        html += '<optgroup label="Claude & GPT (3P)">';
+        claudeGptModels.forEach(m => {
+          const isSelected = m.id === selectedVal ? 'selected' : '';
+          const star = m.recommended ? ' ★' : '';
+          html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}${star}</option>`;
+        });
+        html += '</optgroup>';
+      }
+
+      if (otherModels.length > 0) {
+        html += '<optgroup label="Other Models">';
+        otherModels.forEach(m => {
+          const isSelected = m.id === selectedVal ? 'selected' : '';
+          html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}</option>`;
+        });
+        html += '</optgroup>';
+      }
+
+      return html;
+    }
+
+    selectModelPrimary.innerHTML = buildOptionsHtml(currentPrimary);
+
+    // If current selection wasn't in list, add explicit option
+    if (currentPrimary && !selectModelPrimary.value) {
+      const opt = new Option(currentPrimary, currentPrimary, true, true);
+      selectModelPrimary.add(opt);
+    }
+
+    // Populate secondary options strictly scoped to cross-vendor models
+    updateSecondaryOptions();
+
+    if (currentSecondary && !selectModelSecondary.value) {
+      const opt = new Option(currentSecondary, currentSecondary, true, true);
+      selectModelSecondary.add(opt);
+    }
+  }
+
+  async function handleSaveConfig() {
+    if (!btnSaveConfig) return;
+
+    const primaryVal = selectModelPrimary ? selectModelPrimary.value : currentAppConfig.model_primary;
+    const secondaryVal = selectModelSecondary ? selectModelSecondary.value : currentAppConfig.model_secondary;
+    const isFallbackEnabled = fallbackToggle ? fallbackToggle.checked : false;
+
+    // Client-side cross-vendor validation
+    if (isFallbackEnabled && primaryVal && secondaryVal) {
+      const pCat = getModelCategory(primaryVal);
+      const sCat = getModelCategory(secondaryVal);
+      if (pCat === sCat) {
+        showToast('Primary and Secondary models cannot be from the same provider. Choose Gemini ↔ Claude/GPT.', 'error', 5000);
+        return;
+      }
+    }
+
+    const origText = btnSaveConfig.textContent;
+    btnSaveConfig.disabled = true;
+    btnSaveConfig.textContent = 'Saving...';
+
+    const payload = {
+      model_primary: primaryVal,
+      model_secondary: secondaryVal,
+      fallback_secondary_enabled: isFallbackEnabled
+    };
+
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData?.error?.message || `HTTP ${res.status}`);
+      }
+
+      const updated = await res.json();
+      currentAppConfig = updated;
+      showToast('Model fallback configuration saved successfully', 'success', 3000);
+      if (configStatusMsg) {
+        configStatusMsg.textContent = `Saved at ${new Date().toLocaleTimeString()}`;
+        setTimeout(() => {
+          if (configStatusMsg) configStatusMsg.textContent = '';
+        }, 4000);
+      }
+    } catch (err) {
+      showToast(`Failed to save settings: ${err.message}`, 'error', 5000);
+    } finally {
+      btnSaveConfig.disabled = false;
+      btnSaveConfig.textContent = origText;
+    }
+  }
+
+  // =========================================================================
   // Token Metrics & 14-Day Timeline Visualizer (Bug Fix & Redesign)
   // =========================================================================
 
@@ -952,6 +1217,10 @@
         pillClass = 'pill-tokens';
         pillText = 'TOKENS';
         break;
+      case 'model_fallback':
+        pillClass = 'pill-fallback';
+        pillText = 'MODEL FALLBACK';
+        break;
       case 'error':
         pillClass = 'pill-error';
         pillText = 'ERROR';
@@ -982,7 +1251,7 @@
 
   function matchesFilter(event, filter) {
     if (filter === 'all') return true;
-    if (filter === 'failover' && event.type === 'failover_429') return true;
+    if (filter === 'failover' && (event.type === 'failover_429' || event.type === 'model_fallback')) return true;
     if (filter === 'quota' && (event.type === 'quota_exhausted' || event.type === 'quota_restored')) return true;
     if (filter === 'tokens' && event.type === 'tokens_captured') return true;
     if (filter === 'error' && event.type === 'error') return true;
@@ -1043,6 +1312,8 @@
             fetchAccounts();
           } else if (event.type === 'tokens_captured') {
             fetchMetrics();
+          } else if (event.type === 'model_fallback') {
+            fetchConfig();
           }
         } catch (err) {
           console.warn('Failed to parse SSE payload:', err);
@@ -1058,6 +1329,31 @@
   // =========================================================================
 
   function initListeners() {
+    // Model fallback toggle
+    if (fallbackToggle) {
+      fallbackToggle.addEventListener('change', () => {
+        updateToggleStatusText(fallbackToggle.checked);
+      });
+    }
+
+    // Dynamic secondary model options on primary model change
+    if (selectModelPrimary) {
+      selectModelPrimary.addEventListener('change', updateSecondaryOptions);
+    }
+
+    // Save model fallback settings
+    if (btnSaveConfig) {
+      btnSaveConfig.addEventListener('click', handleSaveConfig);
+    }
+
+    // Refresh models button
+    if (btnRefreshModels) {
+      btnRefreshModels.addEventListener('click', async () => {
+        await fetchModels();
+        showToast('AI models refreshed from Antigravity', 'info', 2000);
+      });
+    }
+
     // Sync / Refresh Quotas button
     const btnRefresh = document.getElementById('btn-refresh');
     const refreshIcon = document.getElementById('refresh-icon');
@@ -1177,6 +1473,8 @@
     fetchStatus();
     fetchAccounts();
     fetchMetrics();
+    fetchConfig();
+    fetchModels();
     setupSSE();
 
     // Trigger one initial quota synchronization pass

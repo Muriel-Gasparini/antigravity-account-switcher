@@ -41,6 +41,9 @@ Understanding the internal design of Google Antigravity 2.0 is crucial when diag
 - **Voice & Speech-to-Text (`speech.googleapis.com`)**:
   - Antigravity communicates with `speech.googleapis.com` for voice input.
   - To prevent interference, the supervisor injects `NO_PROXY=speech.googleapis.com` and provides raw bidirectional RFC 7231 TCP tunneling on HTTP `CONNECT` requests.
+- **Model Quotas & Intra-Family Fallback**:
+  - In Google Cloud Code PA (`daily-cloudcode-pa.googleapis.com`), different models within the same provider family (e.g. `gemini-2.5-pro` and `gemini-2.5-flash`) operate under separate quota buckets.
+  - The fallback engine and configuration validation must allow intra-family model fallback as long as primary and secondary models are distinct (`primary != secondary`).
 
 ---
 
@@ -93,6 +96,9 @@ The codebase adheres strictly to **Clean Architecture / Hexagonal Principles**:
    - `internal/quota/`: Background daemon querying Google Cloud Code PA API endpoints and probing local `language_server` sockets.
    - `internal/oauth/`: RFC 8252 loopback OAuth2 server for account onboarding.
    - `internal/web/`: HTTP server embedding frontend assets (`embed.FS`) and providing SSE event feeds.
+3. **Transition-Edge Event Logging (No Request-Level Flooding)**:
+   - State transitions (e.g. switching from primary to secondary model upon 429, predictive fallback on quota exhaustion, or quota restoration) must emit user-facing logs **strictly once per transition**.
+   - Subsequent in-flight requests and streaming SSE chunks during the degraded state must proceed silently without repeating the transition banner, preserving clean terminal output and preventing log pollution.
 
 ---
 
@@ -128,11 +134,16 @@ The repository enforces strict continuous integration via GitHub Actions (`.gith
   - `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.
   - Example: `fix(proxy): preserve Content-Length header on replayed requests`
 
+### Open-Source Code & Test Cleanliness
+- **Zero Agent Jargon**: Never commit internal agent orchestration artifacts, milestone markers, or challenger identifiers (`M1`, `M2`, `M3`, `M4`, `M5`, `challenger`, `adversarial`) in production filenames or test function names.
+- **Idiomatic Go Naming**: All test files must follow idiomatic Go naming representing actual feature domains (e.g. `cli_precedence_test.go`, `model_rewriter_stress_test.go`, `fallback_wiring_test.go`), and test functions must clearly describe the behavior under test (e.g. `TestCLI_PrecedenceMatrix`, `TestFailover_Stress`).
+
 ### Pre-PR Checklist
 Before opening a Pull Request or pushing code:
 - [ ] Code is formatted with `make fmt`.
 - [ ] Linters pass with zero warnings via `make lint`.
 - [ ] All tests pass without data races via `make test-race`.
 - [ ] Static binary compiles cleanly via `make build-static`.
+- [ ] All tests and source files use clean, idiomatic Go naming (zero milestone markers like M1-M5 or challenger labels).
 - [ ] Fill out all sections of `.github/pull_request_template.md`.
 - [ ] Ensure documentation is kept synchronized (`README.md` and `README.pt-BR.md` for user-facing changes).
