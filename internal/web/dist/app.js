@@ -267,7 +267,7 @@
       // Version badge
       const versionEl = document.getElementById('switcher-version');
       if (versionEl && data.version) {
-        versionEl.textContent = `v${data.version}`;
+        versionEl.textContent = data.version.startsWith('v') ? data.version : `v${data.version}`;
       }
 
       // Active Account Route

@@ -110,7 +110,7 @@ func NewServer(
 	cfg := ServerConfig{
 		Port:         8080,
 		BindAddr:     "127.0.0.1",
-		Version:      "0.1.0-dev",
+		Version:      "1.1.0",
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 0, // 0 allows indefinite SSE and streaming connections
 	}
