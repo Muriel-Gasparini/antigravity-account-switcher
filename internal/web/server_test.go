@@ -169,6 +169,84 @@ func TestServer_StaticFiles_NoExternalDependencies(t *testing.T) {
 	if !strings.Contains(js, "updateCooldownTimers") {
 		t.Errorf("expected app.js to contain live cooldown timer update ticker")
 	}
+	if !strings.Contains(js, "togglePrivacyMode") {
+		t.Errorf("expected app.js to contain togglePrivacyMode handler")
+	}
+	if !strings.Contains(js, "redactEmails") {
+		t.Errorf("expected app.js to contain redactEmails helper")
+	}
+}
+
+func TestServer_PrivacyModeStaticIntegration(t *testing.T) {
+	_, accRepo, quotaRepo, _, metricsSvc, broadcaster, eventRepo := setupTestWeb(t)
+
+	server, err := NewServer(accRepo, quotaRepo, metricsSvc, broadcaster, eventRepo, nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	ts := httptest.NewServer(server)
+	defer ts.Close()
+
+	// 1. Verify index.html contains Privacy Mode button and attributes
+	respHTML, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatalf("GET / failed: %v", err)
+	}
+	defer respHTML.Body.Close()
+	htmlBytes, _ := io.ReadAll(respHTML.Body)
+	html := string(htmlBytes)
+
+	if !strings.Contains(html, `id="btn-privacy"`) {
+		t.Errorf("expected index.html to contain #btn-privacy element")
+	}
+	if !strings.Contains(html, `aria-label="Toggle Privacy Mode"`) {
+		t.Errorf("expected index.html to contain accessible aria-label on privacy button")
+	}
+
+	// 2. Verify style.css contains Privacy Mode blur and styling rules
+	respCSS, err := http.Get(ts.URL + "/dist/style.css")
+	if err != nil {
+		t.Fatalf("GET /dist/style.css failed: %v", err)
+	}
+	defer respCSS.Body.Close()
+	cssBytes, _ := io.ReadAll(respCSS.Body)
+	css := string(cssBytes)
+
+	for _, rule := range []string{
+		"body.privacy-mode .route-email",
+		"body.privacy-mode .account-email",
+		"body.privacy-mode .blurred-email",
+		"filter: blur(",
+		".btn-privacy-active",
+	} {
+		if !strings.Contains(css, rule) {
+			t.Errorf("expected style.css to contain rule %q", rule)
+		}
+	}
+
+	// 3. Verify app.js contains Privacy Mode logic, key shortcut, and localStorage key
+	respJS, err := http.Get(ts.URL + "/dist/app.js")
+	if err != nil {
+		t.Fatalf("GET /dist/app.js failed: %v", err)
+	}
+	defer respJS.Body.Close()
+	jsBytes, _ := io.ReadAll(respJS.Body)
+	js := string(jsBytes)
+
+	for _, token := range []string{
+		"antigravity_privacy_mode",
+		"togglePrivacyMode",
+		"updatePrivacyUI",
+		"redactEmails",
+		"formatLogMessage",
+		"blurred-email",
+		"[redacted@email.com]",
+	} {
+		if !strings.Contains(js, token) {
+			t.Errorf("expected app.js to contain token %q", token)
+		}
+	}
 }
 
 func TestServer_API_Status(t *testing.T) {

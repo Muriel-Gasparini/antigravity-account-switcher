@@ -1349,6 +1349,43 @@ body {
 }
 
 /* --------------------------------------------------------------------------
+   Privacy Mode (Screenshot & Screen Sharing Protection)
+   -------------------------------------------------------------------------- */
+body.privacy-mode .route-email,
+body.privacy-mode .account-email {
+  filter: blur(6px);
+  user-select: none;
+  pointer-events: none;
+  transition: filter 0.2s ease-in-out;
+}
+
+.blurred-email {
+  transition: filter 0.2s ease-in-out, background-color 0.2s ease-in-out;
+}
+
+body.privacy-mode .blurred-email {
+  filter: blur(5px);
+  user-select: none;
+  pointer-events: none;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-radius: var(--radius-sm);
+  padding: 0 4px;
+  display: inline-block;
+  line-height: 1.2;
+}
+
+.btn-privacy-active {
+  background-color: rgba(16, 185, 129, 0.15) !important;
+  color: var(--color-success) !important;
+  border-color: rgba(16, 185, 129, 0.4) !important;
+}
+
+.btn-privacy-active:hover {
+  background-color: rgba(16, 185, 129, 0.25) !important;
+  border-color: rgba(16, 185, 129, 0.6) !important;
+}
+
+/* --------------------------------------------------------------------------
    Accessibility: Reduced Motion
    -------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
@@ -1358,3 +1395,4 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+

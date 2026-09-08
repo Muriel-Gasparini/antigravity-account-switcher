@@ -173,6 +173,8 @@ A CLI disponibiliza comandos para supervisão, troca manual e configuração:
   ```bash
   antigravity-account-switcher launch --port 1831
   ```
+- **Modo Privacidade no Dashboard Web:**
+  Clique no botão **Privacidade** no cabeçalho do painel ou pressione <kbd>P</kbd> para borrar visualmente e ofuscar todos os e-mails das contas Google (cards de contas, rota ativa e logs de eventos em tempo real), permitindo capturas de tela e transmissões sem vazamento de dados pessoais.
 
 ---
 

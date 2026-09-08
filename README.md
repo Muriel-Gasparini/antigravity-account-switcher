@@ -173,6 +173,8 @@ The CLI provides commands for launch supervision, manual switching, and configur
   ```bash
   antigravity-account-switcher launch --port 1831
   ```
+- **Web Dashboard Privacy Mode:**
+  Click the **Privacy** button in the dashboard header or press <kbd>P</kbd> to blur and redact all Google account email addresses across cards, active routing, and live proxy event logs for safe screenshots and screen-sharing.
 
 ---
 
