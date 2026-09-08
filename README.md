@@ -177,6 +177,8 @@ The CLI provides commands for launch supervision, manual switching, and configur
   ```bash
   antigravity-account-switcher launch --fallback-secondary --model-primary gemini-2.5-pro --model-secondary claude-3-7-sonnet
   ```
+- **Web Dashboard Privacy Mode:**
+  Click the **Privacy** button in the dashboard header or press <kbd>P</kbd> to blur and redact all Google account email addresses across cards, active routing, and live proxy event logs for safe screenshots and screen-sharing.
 
 ---
 
@@ -203,6 +205,7 @@ When switching between model providers (e.g. Claude <-> Gemini) or continuing mu
 - The proxy intercepts the HTTP 400 response before it reaches the client.
 - It applies payload sanitization via structural visitors (`skip_thought_signature_validator` injection or HMAC thought block pruning) while preserving complete user chat history.
 - The request is instantly replayed in memory to Google Cloud Code PA, ensuring agent thinking continues seamlessly without crashing the editor or losing conversation context.
+>>>>>>> origin/main
 
 ---
 

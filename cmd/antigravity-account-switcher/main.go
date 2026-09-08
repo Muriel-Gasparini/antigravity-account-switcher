@@ -27,7 +27,7 @@ import (
 
 var (
 	// Build information injected via -ldflags during compilation.
-	Version = "0.1.0-dev"
+	Version = "1.1.0"
 	Commit  = "unknown"
 	Date    = "unknown"
 )

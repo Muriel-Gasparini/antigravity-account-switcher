@@ -19,7 +19,7 @@
         <div class="brand-titles">
           <div class="brand-name-row">
             <span class="brand-name">Antigravity Switcher</span>
-            <span id="switcher-version" class="brand-version">v0.1.0-dev</span>
+            <span id="switcher-version" class="brand-version">v1.1.0</span>
           </div>
           <p class="brand-subtitle">Zero-latency failover proxy & quota supervisor for Google Antigravity 2.0</p>
         </div>
@@ -31,6 +31,14 @@
           <span class="status-dot status-dot-success" id="connection-dot"></span>
           <span id="connection-status-text">Connected</span>
         </div>
+
+        <!-- Privacy Mode Toggle Button -->
+        <button id="btn-privacy" class="btn btn-secondary btn-icon" title="Toggle Privacy Mode (Press P)" aria-label="Toggle Privacy Mode" aria-pressed="false">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" id="privacy-icon" width="16" height="16">
+            <path id="privacy-icon-path" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+          <span class="btn-text-desktop" id="privacy-btn-text">Privacy</span>
+        </button>
 
         <!-- Sync / Refresh Quotas Button -->
         <button id="btn-refresh" class="btn btn-secondary btn-icon" title="Synchronize Quotas Now (Press R)" aria-label="Synchronize Quotas Now">

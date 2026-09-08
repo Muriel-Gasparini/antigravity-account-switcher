@@ -177,6 +177,8 @@ A CLI disponibiliza comandos para supervisão, troca manual e configuração:
   ```bash
   antigravity-account-switcher launch --fallback-secondary --model-primary gemini-2.5-pro --model-secondary claude-3-7-sonnet
   ```
+- **Modo Privacidade no Dashboard Web:**
+  Clique no botão **Privacidade** no cabeçalho do painel ou pressione <kbd>P</kbd> para borrar visualmente e ofuscar todos os e-mails das contas Google (cards de contas, rota ativa e logs de eventos em tempo real), permitindo capturas de tela e transmissões sem vazamento de dados pessoais.
 
 ---
 
@@ -203,6 +205,7 @@ Ao alternar entre provedores de modelos (ex.: Claude <-> Gemini) ou em sessões 
 - O proxy intercepta a resposta HTTP 400 antes que ela chegue ao cliente.
 - Aplica sanitização transparente no payload (injetando `skip_thought_signature_validator` ou limpando blocos de HMAC incompatíveis) preservando todo o histórico de conversação do usuário.
 - Reenvia a requisição imediatamente em memória para o Google Cloud Code PA, garantindo que o agente continue pensando sem travar o editor ou interromper a sessão de código.
+>>>>>>> origin/main
 
 ---
 

@@ -89,7 +89,7 @@ func NewAPIHandler(
 	version string,
 ) *APIHandler {
 	if version == "" {
-		version = "0.1.0-dev"
+		version = "1.1.0"
 	}
 	return &APIHandler{
 		accountRepo:    accountRepo,

@@ -19,6 +19,11 @@
   let isUserScrolledUp = false;
   let selectedColumnIndex = -1;
 
+  // Privacy Mode State (Persistent in localStorage)
+  const PRIVACY_STORAGE_KEY = 'antigravity_privacy_mode';
+  let isPrivacyMode = localStorage.getItem(PRIVACY_STORAGE_KEY) === 'true';
+  const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+
   // DOM Elements
   const logsContainer = document.getElementById('logs-container');
   const accountsGrid = document.getElementById('accounts-grid');
@@ -57,6 +62,71 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  }
+
+  function redactEmails(text) {
+    if (!text) return '';
+    return String(text).replace(EMAIL_REGEX, '[redacted@email.com]');
+  }
+
+  function formatLogMessage(text) {
+    if (!text) return '';
+    const escaped = escapeHtml(text);
+    return escaped.replace(EMAIL_REGEX, match => `<span class="blurred-email">${match}</span>`);
+  }
+
+  function updatePrivacyUI() {
+    const btn = document.getElementById('btn-privacy');
+    const textEl = document.getElementById('privacy-btn-text');
+    const iconPath = document.getElementById('privacy-icon-path');
+
+    if (isPrivacyMode) {
+      document.body.classList.add('privacy-mode');
+      if (btn) {
+        btn.classList.add('btn-privacy-active');
+        btn.setAttribute('aria-pressed', 'true');
+        btn.title = 'Privacy Mode Active (Press P to toggle)';
+      }
+      if (textEl) textEl.textContent = 'Privacy: ON';
+      if (iconPath) {
+        iconPath.setAttribute('d', 'M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18');
+      }
+    } else {
+      document.body.classList.remove('privacy-mode');
+      if (btn) {
+        btn.classList.remove('btn-privacy-active');
+        btn.setAttribute('aria-pressed', 'false');
+        btn.title = 'Toggle Privacy Mode (Press P)';
+      }
+      if (textEl) textEl.textContent = 'Privacy';
+      if (iconPath) {
+        iconPath.setAttribute('d', 'M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z');
+      }
+    }
+
+    // Refresh active route email title tooltip
+    const activeEmailEl = document.getElementById('active-email');
+    if (activeEmailEl && activeEmailEl.getAttribute('data-real-email')) {
+      const realEmail = activeEmailEl.getAttribute('data-real-email');
+      activeEmailEl.title = isPrivacyMode ? '[Protected in Privacy Mode]' : `${realEmail} (Click to copy)`;
+    }
+
+    // Re-render accounts grid if accounts data loaded
+    if (rawAccountsData && rawAccountsData.length > 0) {
+      renderAccountsGrid();
+    }
+
+    // Reapply log filtering to refresh blurred spans
+    reapplyLogFilter();
+  }
+
+  function togglePrivacyMode() {
+    isPrivacyMode = !isPrivacyMode;
+    try {
+      localStorage.setItem(PRIVACY_STORAGE_KEY, isPrivacyMode ? 'true' : 'false');
+    } catch (_) {}
+    updatePrivacyUI();
+    showToast(isPrivacyMode ? 'Privacy Mode enabled (emails blurred for screenshots)' : 'Privacy Mode disabled', 'info', 2500);
   }
 
   function formatNumber(num) {
@@ -197,7 +267,7 @@
       // Version badge
       const versionEl = document.getElementById('switcher-version');
       if (versionEl && data.version) {
-        versionEl.textContent = `v${data.version}`;
+        versionEl.textContent = data.version.startsWith('v') ? data.version : `v${data.version}`;
       }
 
       // Active Account Route
@@ -209,13 +279,21 @@
       if (data.active_account) {
         const email = data.active_account.email;
         activeEmailEl.textContent = email;
-        activeEmailEl.title = `${email} (Click to copy)`;
-        activeEmailEl.style.cursor = 'pointer';
-        activeEmailEl.onclick = () => copyToClipboard(email, 'Account email');
+        activeEmailEl.setAttribute('data-real-email', email);
+        activeEmailEl.title = isPrivacyMode ? '[Protected in Privacy Mode]' : `${email} (Click to copy)`;
+        activeEmailEl.style.cursor = isPrivacyMode ? 'default' : 'pointer';
+        activeEmailEl.onclick = () => {
+          const toCopy = isPrivacyMode ? '[redacted@email.com]' : email;
+          copyToClipboard(toCopy, isPrivacyMode ? 'Redacted email' : 'Account email');
+        };
 
         if (copyActiveBtn) {
           copyActiveBtn.style.display = 'inline-flex';
-          copyActiveBtn.onclick = () => copyToClipboard(email, 'Account email');
+          copyActiveBtn.title = isPrivacyMode ? 'Copy redacted email' : 'Copy active email';
+          copyActiveBtn.onclick = () => {
+            const toCopy = isPrivacyMode ? '[redacted@email.com]' : email;
+            copyToClipboard(toCopy, isPrivacyMode ? 'Redacted email' : 'Account email');
+          };
         }
 
         let createdDateStr = 'recent';
@@ -231,6 +309,7 @@
         activeBadge.textContent = (data.active_account.status || 'ACTIVE').toUpperCase();
         activeBadge.className = isExhausted ? 'badge badge-danger' : 'badge badge-success';
       } else {
+        activeEmailEl.removeAttribute('data-real-email');
         activeEmailEl.textContent = 'No Active Google Account';
         activeEmailEl.title = 'No account selected';
         activeEmailEl.style.cursor = 'default';
@@ -447,15 +526,18 @@
     else if (isActive) statusBadgeClass = 'badge-success';
     else if (acc.status === 'error') statusBadgeClass = 'badge-danger';
 
+    const cardTitle = isPrivacyMode ? '[Protected in Privacy Mode]' : escapeHtml(acc.email);
+    const copyTitle = isPrivacyMode ? 'Copy redacted email' : 'Copy email address';
+
     card.innerHTML = `
       <div class="account-header">
         <div class="account-info">
-          <div class="account-email" title="${escapeHtml(acc.email)}">
+          <div class="account-email" title="${cardTitle}">
             ${escapeHtml(acc.email)}
           </div>
           <div class="account-id-row">
             <span class="account-id-chip">ID: ${escapeHtml(acc.id.slice(0, 8))}</span>
-            <button class="copy-btn btn-copy-email" data-email="${escapeHtml(acc.email)}" title="Copy email address" aria-label="Copy email">
+            <button class="copy-btn btn-copy-email" data-email="${escapeHtml(acc.email)}" title="${copyTitle}" aria-label="Copy email">
               <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
@@ -494,7 +576,8 @@
     if (copyBtn) {
       copyBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        copyToClipboard(acc.email, 'Account email');
+        const toCopy = isPrivacyMode ? '[redacted@email.com]' : acc.email;
+        copyToClipboard(toCopy, isPrivacyMode ? 'Redacted email' : 'Account email');
       });
     }
 
@@ -521,7 +604,8 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
             </svg>
           `;
-          showToast(`Click the red checkmark to confirm removal of ${acc.email}`, 'info', 3500);
+          const displayEmail = isPrivacyMode ? '[redacted@email.com]' : acc.email;
+          showToast(`Click the red checkmark to confirm removal of ${displayEmail}`, 'info', 3500);
 
           confirmTimeout = setTimeout(() => {
             deleteBtn.classList.remove('btn-danger-confirm');
@@ -1137,7 +1221,8 @@
         method: 'DELETE'
       });
       if (res.ok) {
-        showToast(`Account ${email} removed from pool`, 'info');
+        const displayEmail = isPrivacyMode ? '[redacted@email.com]' : email;
+        showToast(`Account ${displayEmail} removed from pool`, 'info');
         await Promise.all([fetchStatus(), fetchAccounts()]);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -1229,11 +1314,12 @@
 
     const timeStr = formatTimeOnly(event.timestamp);
     const accPart = event.account_id ? `<span class="log-account">[${escapeHtml(event.account_id.slice(0, 8))}]</span> ` : '';
+    const formattedMsg = formatLogMessage(event.message || '');
 
     entry.innerHTML = `
       <span class="log-time">${escapeHtml(timeStr)}</span>
       <span class="log-pill ${pillClass}">${escapeHtml(pillText)}</span>
-      <span class="log-message">${accPart}${escapeHtml(event.message || '')}</span>
+      <span class="log-message">${accPart}${formattedMsg}</span>
     `;
 
     logsContainer.appendChild(entry);
@@ -1425,11 +1511,32 @@
           const t = formatTimeOnly(evt.timestamp);
           const type = (evt.type || 'INFO').toUpperCase();
           const acc = evt.account_id ? `[${evt.account_id.slice(0, 8)}] ` : '';
-          return `[${t}] [${type}] ${acc}${evt.message || ''}`;
+          let msg = evt.message || '';
+          if (isPrivacyMode) {
+            msg = redactEmails(msg);
+          }
+          return `[${t}] [${type}] ${acc}${msg}`;
         }).join('\n');
-        copyToClipboard(textLines, 'Proxy logs');
+        copyToClipboard(textLines, isPrivacyMode ? 'Redacted proxy logs' : 'Proxy logs');
       });
     }
+
+    // Privacy Mode Toggle Button
+    const btnPrivacy = document.getElementById('btn-privacy');
+    if (btnPrivacy) {
+      btnPrivacy.addEventListener('click', togglePrivacyMode);
+    }
+
+    // Global keyboard shortcut: 'P' to toggle Privacy Mode
+    document.addEventListener('keydown', (e) => {
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) {
+        return;
+      }
+      if ((e.key === 'p' || e.key === 'P') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        e.preventDefault();
+        togglePrivacyMode();
+      }
+    });
 
     // Log scroll detection (pause auto-scroll when user inspects history)
     if (logsContainer) {
@@ -1469,6 +1576,7 @@
 
   // Application initialization
   document.addEventListener('DOMContentLoaded', () => {
+    updatePrivacyUI();
     initListeners();
     fetchStatus();
     fetchAccounts();
