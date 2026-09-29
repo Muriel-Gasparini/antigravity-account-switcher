@@ -104,7 +104,19 @@ func ResolveCredentials() (string, string) {
 		return fileID, fileSec
 	}
 
-	// 4. Installed Antigravity 2.0 binary bundle inspection
+	// 4. Default built-in native credentials for Google Antigravity 2.0 (instant, zero I/O)
+	defID, defSec := defaultNativeCredentials()
+	if defID != "" && defSec != "" {
+		if envID != "" {
+			return envID, defSec
+		}
+		if envSec != "" {
+			return defID, envSec
+		}
+		return defID, defSec
+	}
+
+	// 5. Installed Antigravity 2.0 binary bundle inspection (fallback)
 	if bundleID, bundleSec := discoverFromIDEBundle(); bundleID != "" && bundleSec != "" {
 		if envID != "" {
 			return envID, bundleSec
@@ -115,15 +127,7 @@ func ResolveCredentials() (string, string) {
 		return bundleID, bundleSec
 	}
 
-	// 5. Default built-in native credentials for Google Antigravity 2.0
-	defID, defSec := defaultNativeCredentials()
-	if envID != "" {
-		return envID, defSec
-	}
-	if envSec != "" {
-		return defID, envSec
-	}
-	return defID, defSec
+	return envID, envSec
 }
 
 func discoverFromTokenFile() (string, string) {
@@ -285,6 +289,10 @@ func discoverFromIDEBundle() (string, string) {
 			continue
 		}
 		seen[c] = true
+		fi, err := os.Stat(c)
+		if err != nil || fi.IsDir() || fi.Size() > 10*1024*1024 {
+			continue // skip directories, missing files, or binaries larger than 10MB
+		}
 		if data, err := os.ReadFile(c); err == nil {
 			mID := reID.Find(data)
 			mSec := reSec.Find(data)
