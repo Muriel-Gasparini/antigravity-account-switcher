@@ -205,7 +205,6 @@ Ao alternar entre provedores de modelos (ex.: Claude <-> Gemini) ou em sessões 
 - O proxy intercepta a resposta HTTP 400 antes que ela chegue ao cliente.
 - Aplica sanitização transparente no payload (injetando `skip_thought_signature_validator` ou limpando blocos de HMAC incompatíveis) preservando todo o histórico de conversação do usuário.
 - Reenvia a requisição imediatamente em memória para o Google Cloud Code PA, garantindo que o agente continue pensando sem travar o editor ou interromper a sessão de código.
->>>>>>> origin/main
 
 ---
 

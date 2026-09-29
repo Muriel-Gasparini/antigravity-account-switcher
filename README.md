@@ -205,7 +205,6 @@ When switching between model providers (e.g. Claude <-> Gemini) or continuing mu
 - The proxy intercepts the HTTP 400 response before it reaches the client.
 - It applies payload sanitization via structural visitors (`skip_thought_signature_validator` injection or HMAC thought block pruning) while preserving complete user chat history.
 - The request is instantly replayed in memory to Google Cloud Code PA, ensuring agent thinking continues seamlessly without crashing the editor or losing conversation context.
->>>>>>> origin/main
 
 ---
 

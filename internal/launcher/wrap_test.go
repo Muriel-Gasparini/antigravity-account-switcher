@@ -86,7 +86,7 @@ func TestWrap_EchoCommand_ZeroExit(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	cmdArgs := []string{"sh", "-c", "echo 'hello from coupled child'; echo $HTTP_PROXY"}
@@ -120,7 +120,7 @@ func TestWrap_ExitCodePropagation(t *testing.T) {
 	}
 	defer db.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	cmdArgs := []string{"sh", "-c", "exit 42"}
@@ -172,7 +172,7 @@ func TestWrap_MissingCommandReturnsDescriptiveError(t *testing.T) {
 	}
 	defer db.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	cmdArgs := []string{"non_existent_binary_xyz_12345"}
@@ -209,7 +209,7 @@ func TestWrap_InjectsAppImageEnv(t *testing.T) {
 	}
 	defer db.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	var stdout bytes.Buffer

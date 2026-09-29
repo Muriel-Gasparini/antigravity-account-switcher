@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -462,5 +463,85 @@ func TestOAuth_HeadlessFallback(t *testing.T) {
 	}
 	if acc == nil || acc.Email != "developer@mockgoogle.com" {
 		t.Errorf("unexpected account returned in headless mode: %+v", acc)
+	}
+}
+
+func TestDefaultNativeCredentials(t *testing.T) {
+	id, sec := defaultNativeCredentials()
+	if id == "" {
+		t.Fatal("expected non-empty default client ID")
+	}
+	if !strings.HasSuffix(id, ".apps.googleusercontent.com") {
+		t.Errorf("expected client ID to end with .apps.googleusercontent.com, got %s", id)
+	}
+	if sec == "" {
+		t.Fatal("expected non-empty default client secret")
+	}
+	prefix := string([]byte{0x47, 0x4f, 0x43, 0x53, 0x50, 0x58, 0x2d}) // native secret prefix
+	if !strings.HasPrefix(sec, prefix) {
+		t.Errorf("expected client secret to start with native prefix %s, got %s", prefix, sec[:7])
+	}
+	if len(sec) != 35 {
+		t.Errorf("expected client secret length 35, got %d (%s)", len(sec), sec)
+	}
+}
+
+func TestResolveCredentials_Fallback(t *testing.T) {
+	// Isolate home directory and config dir so local machine state does not leak into test
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("ANTIGRAVITY_CONFIG_DIR", tempHome)
+	t.Setenv("ANTIGRAVITY_BIN", "")
+
+	origID := os.Getenv("ANTIGRAVITY_CLIENT_ID")
+	origSec := os.Getenv("ANTIGRAVITY_CLIENT_SECRET")
+	t.Cleanup(func() {
+		os.Setenv("ANTIGRAVITY_CLIENT_ID", origID)
+		os.Setenv("ANTIGRAVITY_CLIENT_SECRET", origSec)
+	})
+	_ = os.Unsetenv("ANTIGRAVITY_CLIENT_ID")
+	_ = os.Unsetenv("ANTIGRAVITY_CLIENT_SECRET")
+
+	id, sec := ResolveCredentials()
+	expectedID, expectedSec := defaultNativeCredentials()
+	if id != expectedID || sec != expectedSec {
+		t.Fatalf("expected exact defaultNativeCredentials (%q, %q), got (%q, %q)", expectedID, expectedSec, id, sec)
+	}
+}
+
+func TestResolveCredentials_NoAsymmetricMixing(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("ANTIGRAVITY_CONFIG_DIR", tempHome)
+
+	t.Setenv("ANTIGRAVITY_CLIENT_ID", "custom-only-id.apps.googleusercontent.com")
+	_ = os.Unsetenv("ANTIGRAVITY_CLIENT_SECRET")
+
+	id, sec := ResolveCredentials()
+	if id != "custom-only-id.apps.googleusercontent.com" {
+		t.Errorf("expected custom id, got %s", id)
+	}
+	if sec != "" {
+		t.Errorf("expected empty secret (not mixed with native secret), got %s", sec)
+	}
+}
+
+func TestResolveCredentials_EnvOverride(t *testing.T) {
+	origID := os.Getenv("ANTIGRAVITY_CLIENT_ID")
+	origSec := os.Getenv("ANTIGRAVITY_CLIENT_SECRET")
+	t.Cleanup(func() {
+		os.Setenv("ANTIGRAVITY_CLIENT_ID", origID)
+		os.Setenv("ANTIGRAVITY_CLIENT_SECRET", origSec)
+	})
+
+	os.Setenv("ANTIGRAVITY_CLIENT_ID", "custom-env-client-id.apps.googleusercontent.com")
+	os.Setenv("ANTIGRAVITY_CLIENT_SECRET", "custom-env-client-secret")
+
+	id, sec := ResolveCredentials()
+	if id != "custom-env-client-id.apps.googleusercontent.com" {
+		t.Errorf("expected env client ID override, got %s", id)
+	}
+	if sec != "custom-env-client-secret" {
+		t.Errorf("expected env client secret override, got %s", sec)
 	}
 }

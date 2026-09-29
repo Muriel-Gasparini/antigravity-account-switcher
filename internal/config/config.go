@@ -34,6 +34,8 @@ type Config struct {
 	ModelPrimary             string `json:"model_primary"`
 	ModelSecondary           string `json:"model_secondary"`
 	FallbackSecondaryEnabled bool   `json:"fallback_secondary_enabled"`
+	ClientID                 string `json:"client_id,omitempty"`
+	ClientSecret             string `json:"client_secret,omitempty"`
 }
 
 // ConfigDir returns the default configuration directory (~/.config/antigravity-account-switcher).
@@ -76,8 +78,8 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load reads the configuration from disk, falling back to defaults if missing.
-func Load() (*Config, error) {
+// LoadDiskConfig reads the configuration strictly from disk without applying environment variable overrides.
+func LoadDiskConfig() (*Config, error) {
 	cfg := DefaultConfig()
 	path := ConfigFilePath()
 
@@ -90,6 +92,24 @@ func Load() (*Config, error) {
 		if err := json.Unmarshal(data, cfg); err != nil {
 			return nil, fmt.Errorf("failed to parse config JSON at %s: %w", path, err)
 		}
+	}
+
+	// Defensive defaults if unmarshaled JSON contained explicit empty strings
+	if cfg.ModelPrimary == "" {
+		cfg.ModelPrimary = DefaultModelPrimary
+	}
+	if cfg.ModelSecondary == "" {
+		cfg.ModelSecondary = DefaultModelSecondary
+	}
+
+	return cfg, nil
+}
+
+// Load reads the configuration from disk, applying environment variable overrides.
+func Load() (*Config, error) {
+	cfg, err := LoadDiskConfig()
+	if err != nil {
+		return nil, err
 	}
 
 	// Environment variable overrides
@@ -123,22 +143,20 @@ func Load() (*Config, error) {
 			cfg.FallbackSecondaryEnabled = b
 		}
 	}
-
-	// Defensive defaults if unmarshaled JSON contained explicit empty strings
-	if cfg.ModelPrimary == "" {
-		cfg.ModelPrimary = DefaultModelPrimary
+	if envClientID := os.Getenv("ANTIGRAVITY_CLIENT_ID"); envClientID != "" {
+		cfg.ClientID = strings.TrimSpace(envClientID)
 	}
-	if cfg.ModelSecondary == "" {
-		cfg.ModelSecondary = DefaultModelSecondary
+	if envClientSecret := os.Getenv("ANTIGRAVITY_CLIENT_SECRET"); envClientSecret != "" {
+		cfg.ClientSecret = strings.TrimSpace(envClientSecret)
 	}
 
 	return cfg, nil
 }
 
-// Save writes the configuration to disk, ensuring directory creation.
+// Save writes the configuration to disk, ensuring directory creation and restrictive 0600 file permissions.
 func Save(cfg *Config) error {
 	dir := ConfigDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create config directory %s: %w", dir, err)
 	}
 
@@ -148,9 +166,10 @@ func Save(cfg *Config) error {
 	}
 
 	path := ConfigFilePath()
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write config to %s: %w", path, err)
 	}
+	_ = os.Chmod(path, 0o600)
 
 	return nil
 }
