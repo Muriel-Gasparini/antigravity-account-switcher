@@ -487,7 +487,12 @@ func TestDefaultNativeCredentials(t *testing.T) {
 }
 
 func TestResolveCredentials_Fallback(t *testing.T) {
-	// Temporarily clear environment variables to verify fallback
+	// Isolate home directory and config dir so local machine state does not leak into test
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("ANTIGRAVITY_CONFIG_DIR", tempHome)
+	t.Setenv("ANTIGRAVITY_BIN", "")
+
 	origID := os.Getenv("ANTIGRAVITY_CLIENT_ID")
 	origSec := os.Getenv("ANTIGRAVITY_CLIENT_SECRET")
 	t.Cleanup(func() {
@@ -498,11 +503,26 @@ func TestResolveCredentials_Fallback(t *testing.T) {
 	_ = os.Unsetenv("ANTIGRAVITY_CLIENT_SECRET")
 
 	id, sec := ResolveCredentials()
-	if id == "" || sec == "" {
-		t.Fatalf("ResolveCredentials returned empty credentials in clean environment: id=%q, sec=%q", id, sec)
+	expectedID, expectedSec := defaultNativeCredentials()
+	if id != expectedID || sec != expectedSec {
+		t.Fatalf("expected exact defaultNativeCredentials (%q, %q), got (%q, %q)", expectedID, expectedSec, id, sec)
 	}
-	if !strings.HasSuffix(id, ".apps.googleusercontent.com") {
-		t.Errorf("unexpected client ID suffix: %s", id)
+}
+
+func TestResolveCredentials_NoAsymmetricMixing(t *testing.T) {
+	tempHome := t.TempDir()
+	t.Setenv("HOME", tempHome)
+	t.Setenv("ANTIGRAVITY_CONFIG_DIR", tempHome)
+
+	t.Setenv("ANTIGRAVITY_CLIENT_ID", "custom-only-id.apps.googleusercontent.com")
+	_ = os.Unsetenv("ANTIGRAVITY_CLIENT_SECRET")
+
+	id, sec := ResolveCredentials()
+	if id != "custom-only-id.apps.googleusercontent.com" {
+		t.Errorf("expected custom id, got %s", id)
+	}
+	if sec != "" {
+		t.Errorf("expected empty secret (not mixed with native secret), got %s", sec)
 	}
 }
 

@@ -736,7 +736,7 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 		}
 		key := args[1]
 		val := args[2]
-		cfg, err := config.Load()
+		cfg, err := config.LoadDiskConfig()
 		if err != nil {
 			fmt.Fprintf(stderr, "Error loading configuration: %v\n", err)
 			return 1
@@ -810,7 +810,11 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "Failed to save configuration: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "Updated '%s' to '%s' in %s\n", key, val, config.ConfigFilePath())
+		if key == "client_secret" {
+			fmt.Fprintf(stdout, "Updated '%s' to '[configured]' in %s\n", key, config.ConfigFilePath())
+		} else {
+			fmt.Fprintf(stdout, "Updated '%s' to '%s' in %s\n", key, val, config.ConfigFilePath())
+		}
 		return 0
 
 	default:

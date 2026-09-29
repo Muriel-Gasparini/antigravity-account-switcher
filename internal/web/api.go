@@ -528,13 +528,17 @@ func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		} else if acc != nil {
+			evt := &domain.ProxyEvent{
+				Type:      domain.EventTypeAccountSwitched,
+				AccountID: acc.ID,
+				Message:   fmt.Sprintf("Account %s successfully connected via OAuth", acc.Email),
+				Timestamp: time.Now().UTC(),
+			}
 			if a.broadcaster != nil {
-				a.broadcaster.Broadcast(&domain.ProxyEvent{
-					Type:      domain.EventTypeAccountSwitched,
-					AccountID: acc.ID,
-					Message:   fmt.Sprintf("Account %s successfully connected via OAuth", acc.Email),
-					Timestamp: time.Now().UTC(),
-				})
+				a.broadcaster.Broadcast(evt)
+			}
+			if a.eventRepo != nil {
+				_ = a.eventRepo.Record(context.Background(), evt)
 			}
 		}
 	}()

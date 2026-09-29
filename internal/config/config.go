@@ -78,8 +78,8 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load reads the configuration from disk, falling back to defaults if missing.
-func Load() (*Config, error) {
+// LoadDiskConfig reads the configuration strictly from disk without applying environment variable overrides.
+func LoadDiskConfig() (*Config, error) {
 	cfg := DefaultConfig()
 	path := ConfigFilePath()
 
@@ -92,6 +92,24 @@ func Load() (*Config, error) {
 		if err := json.Unmarshal(data, cfg); err != nil {
 			return nil, fmt.Errorf("failed to parse config JSON at %s: %w", path, err)
 		}
+	}
+
+	// Defensive defaults if unmarshaled JSON contained explicit empty strings
+	if cfg.ModelPrimary == "" {
+		cfg.ModelPrimary = DefaultModelPrimary
+	}
+	if cfg.ModelSecondary == "" {
+		cfg.ModelSecondary = DefaultModelSecondary
+	}
+
+	return cfg, nil
+}
+
+// Load reads the configuration from disk, applying environment variable overrides.
+func Load() (*Config, error) {
+	cfg, err := LoadDiskConfig()
+	if err != nil {
+		return nil, err
 	}
 
 	// Environment variable overrides
@@ -132,21 +150,13 @@ func Load() (*Config, error) {
 		cfg.ClientSecret = strings.TrimSpace(envClientSecret)
 	}
 
-	// Defensive defaults if unmarshaled JSON contained explicit empty strings
-	if cfg.ModelPrimary == "" {
-		cfg.ModelPrimary = DefaultModelPrimary
-	}
-	if cfg.ModelSecondary == "" {
-		cfg.ModelSecondary = DefaultModelSecondary
-	}
-
 	return cfg, nil
 }
 
-// Save writes the configuration to disk, ensuring directory creation.
+// Save writes the configuration to disk, ensuring directory creation and restrictive 0600 file permissions.
 func Save(cfg *Config) error {
 	dir := ConfigDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create config directory %s: %w", dir, err)
 	}
 
@@ -156,9 +166,10 @@ func Save(cfg *Config) error {
 	}
 
 	path := ConfigFilePath()
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write config to %s: %w", path, err)
 	}
+	_ = os.Chmod(path, 0o600)
 
 	return nil
 }

@@ -62,8 +62,8 @@ func defaultNativeCredentials() (string, string) {
 // 1. Environment variables: ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET
 // 2. Persistent configuration file: ~/.config/antigravity-account-switcher/config.json (client_id, client_secret)
 // 3. Existing local Antigravity token files: ~/.gemini/antigravity-acp/acp_token.json, ~/.gemini/antigravity-cli/acp_token.json
-// 4. Installed Antigravity 2.0 binary bundle inspection (language_server, main.js, /proc inspection)
-// 5. Default built-in native credentials for Google Antigravity 2.0
+// 4. Default built-in native credentials for Google Antigravity 2.0 (instant, zero I/O)
+// 5. Installed Antigravity 2.0 binary bundle inspection (fallback)
 func ResolveCredentials() (string, string) {
 	// 1. Environment variable override
 	envID := os.Getenv("ANTIGRAVITY_CLIENT_ID")
@@ -72,62 +72,44 @@ func ResolveCredentials() (string, string) {
 		return envID, envSec
 	}
 
-	// 2. Persistent configuration file override
-	if diskCfg, err := config.Load(); err == nil && diskCfg != nil {
-		cfgID := diskCfg.ClientID
-		cfgSec := diskCfg.ClientSecret
-		if envID != "" {
-			cfgID = envID
+	// 2. Persistent configuration file override (or pairing env with config)
+	if diskCfg, err := config.LoadDiskConfig(); err == nil && diskCfg != nil {
+		id := envID
+		if id == "" {
+			id = diskCfg.ClientID
 		}
-		if envSec != "" {
-			cfgSec = envSec
+		sec := envSec
+		if sec == "" {
+			sec = diskCfg.ClientSecret
 		}
-		if cfgID != "" && cfgSec != "" {
-			return cfgID, cfgSec
+		if id != "" && sec != "" {
+			return id, sec
 		}
-		if envID == "" && cfgID != "" {
-			envID = cfgID
-		}
-		if envSec == "" && cfgSec != "" {
-			envSec = cfgSec
-		}
+	}
+
+	// If one custom field is set without the matching secret/id, never pair it
+	// with native credentials from another client.
+	if envID != "" || envSec != "" {
+		return envID, envSec
 	}
 
 	// 3. Existing local token file
 	if fileID, fileSec := discoverFromTokenFile(); fileID != "" && fileSec != "" {
-		if envID != "" {
-			return envID, fileSec
-		}
-		if envSec != "" {
-			return fileID, envSec
-		}
 		return fileID, fileSec
 	}
 
 	// 4. Default built-in native credentials for Google Antigravity 2.0 (instant, zero I/O)
 	defID, defSec := defaultNativeCredentials()
 	if defID != "" && defSec != "" {
-		if envID != "" {
-			return envID, defSec
-		}
-		if envSec != "" {
-			return defID, envSec
-		}
 		return defID, defSec
 	}
 
 	// 5. Installed Antigravity 2.0 binary bundle inspection (fallback)
 	if bundleID, bundleSec := discoverFromIDEBundle(); bundleID != "" && bundleSec != "" {
-		if envID != "" {
-			return envID, bundleSec
-		}
-		if envSec != "" {
-			return bundleID, envSec
-		}
 		return bundleID, bundleSec
 	}
 
-	return envID, envSec
+	return "", ""
 }
 
 func discoverFromTokenFile() (string, string) {
