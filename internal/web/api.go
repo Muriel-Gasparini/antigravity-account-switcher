@@ -498,10 +498,11 @@ func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	urlChan := make(chan string, 1)
+	errChan := make(chan error, 1)
 
 	// Non-blocking trigger of loopback flow
 	go func() {
-		_, err := a.oauthEngine.StartLoopbackFlow(context.Background(), nil, func(authURL string) {
+		acc, err := a.oauthEngine.StartLoopbackFlow(context.Background(), nil, func(authURL string) {
 			select {
 			case urlChan <- authURL:
 			default:
@@ -514,19 +515,37 @@ func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		})
-		if err != nil && a.broadcaster != nil {
-			a.broadcaster.Broadcast(&domain.ProxyEvent{
-				Type:      domain.EventTypeError,
-				Message:   fmt.Sprintf("OAuth flow failed: %v", err),
-				Timestamp: time.Now().UTC(),
-			})
+		if err != nil {
+			select {
+			case errChan <- err:
+			default:
+			}
+			if a.broadcaster != nil {
+				a.broadcaster.Broadcast(&domain.ProxyEvent{
+					Type:      domain.EventTypeError,
+					Message:   fmt.Sprintf("OAuth flow failed: %v", err),
+					Timestamp: time.Now().UTC(),
+				})
+			}
+		} else if acc != nil {
+			if a.broadcaster != nil {
+				a.broadcaster.Broadcast(&domain.ProxyEvent{
+					Type:      domain.EventTypeAccountSwitched,
+					AccountID: acc.ID,
+					Message:   fmt.Sprintf("Account %s successfully connected via OAuth", acc.Email),
+					Timestamp: time.Now().UTC(),
+				})
+			}
 		}
 	}()
 
 	var generatedAuthURL string
 	select {
 	case generatedAuthURL = <-urlChan:
-	case <-time.After(1 * time.Second):
+	case err := <-errChan:
+		writeErrorJSON(w, http.StatusInternalServerError, "Failed to initiate OAuth authorization", err)
+		return
+	case <-time.After(2 * time.Second):
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

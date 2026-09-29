@@ -34,6 +34,8 @@ type Config struct {
 	ModelPrimary             string `json:"model_primary"`
 	ModelSecondary           string `json:"model_secondary"`
 	FallbackSecondaryEnabled bool   `json:"fallback_secondary_enabled"`
+	ClientID                 string `json:"client_id,omitempty"`
+	ClientSecret             string `json:"client_secret,omitempty"`
 }
 
 // ConfigDir returns the default configuration directory (~/.config/antigravity-account-switcher).
@@ -122,6 +124,12 @@ func Load() (*Config, error) {
 		if b, err := ParseBool(envFallback); err == nil {
 			cfg.FallbackSecondaryEnabled = b
 		}
+	}
+	if envClientID := os.Getenv("ANTIGRAVITY_CLIENT_ID"); envClientID != "" {
+		cfg.ClientID = strings.TrimSpace(envClientID)
+	}
+	if envClientSecret := os.Getenv("ANTIGRAVITY_CLIENT_SECRET"); envClientSecret != "" {
+		cfg.ClientSecret = strings.TrimSpace(envClientSecret)
 	}
 
 	// Defensive defaults if unmarshaled JSON contained explicit empty strings

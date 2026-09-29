@@ -672,6 +672,12 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  model_primary:              %s\n", cfg.ModelPrimary)
 		fmt.Fprintf(stdout, "  model_secondary:            %s\n", cfg.ModelSecondary)
 		fmt.Fprintf(stdout, "  fallback_secondary_enabled: %t\n", cfg.FallbackSecondaryEnabled)
+		if cfg.ClientID != "" {
+			fmt.Fprintf(stdout, "  client_id:                  %s\n", cfg.ClientID)
+		}
+		if cfg.ClientSecret != "" {
+			fmt.Fprintf(stdout, "  client_secret:              %s\n", "[configured]")
+		}
 		return 0
 	}
 
@@ -709,6 +715,14 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, cfg.ModelSecondary)
 		case "fallback_secondary_enabled":
 			fmt.Fprintln(stdout, cfg.FallbackSecondaryEnabled)
+		case "client_id":
+			fmt.Fprintln(stdout, cfg.ClientID)
+		case "client_secret":
+			if cfg.ClientSecret != "" {
+				fmt.Fprintln(stdout, "[configured]")
+			} else {
+				fmt.Fprintln(stdout, "")
+			}
 		default:
 			fmt.Fprintf(stderr, "Unknown configuration key: %s\n", key)
 			return 1
@@ -774,6 +788,10 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 				return 1
 			}
 			cfg.FallbackSecondaryEnabled = b
+		case "client_id":
+			cfg.ClientID = strings.TrimSpace(val)
+		case "client_secret":
+			cfg.ClientSecret = strings.TrimSpace(val)
 		default:
 			fmt.Fprintf(stderr, "Unknown configuration key: %s\n", key)
 			return 1

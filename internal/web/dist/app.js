@@ -1240,10 +1240,17 @@
     try {
       const res = await fetch('/oauth/start', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) {
+      if (res.ok && data.auth_url) {
+        showToast('Opening Google sign-in window...', 'info', 5000);
+        const popup = window.open(data.auth_url, 'antigravity_oauth', 'width=600,height=700,status=no,toolbar=no');
+        if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+          showToast('Popup blocked by browser. Please allow popups to complete Google sign-in.', 'warning', 8000);
+        }
+      } else if (res.ok) {
         showToast('OAuth flow initiated. Complete Google sign-in in your browser window.', 'info', 6000);
       } else {
-        showToast(data.error?.message || 'Failed to initiate OAuth authorization', 'error');
+        const errMsg = data.error?.detail || data.error?.message || 'Failed to initiate OAuth authorization';
+        showToast(errMsg, 'error', 8000);
       }
     } catch (e) {
       showToast(`Error initiating OAuth flow: ${e.message}`, 'error');
@@ -1482,6 +1489,17 @@
     if (btnAddAccount) {
       btnAddAccount.addEventListener('click', handleAddAccount);
     }
+
+    // Listen for OAuth postMessage events from callback window
+    window.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'oauth_success') {
+        showToast(`Account ${event.data.email || ''} connected successfully!`, 'success');
+        fetchAccounts();
+        fetchStatus();
+      } else if (event.data && event.data.type === 'oauth_error') {
+        showToast(`OAuth authorization failed: ${event.data.error}`, 'error');
+      }
+    });
 
     // Clear logs button
     const btnClearLogs = document.getElementById('btn-clear-logs');

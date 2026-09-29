@@ -361,3 +361,57 @@ func TestCLI_SubcommandFlags_ServeLaunchWrap(t *testing.T) {
 		})
 	}
 }
+
+func TestCLI_Config_ClientID_And_ClientSecret(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("ANTIGRAVITY_CONFIG_DIR", tmpDir)
+
+	var stdout, stderr bytes.Buffer
+
+	// Set client_id
+	code := executeConfig([]string{"set", "client_id", "test-client-id-123.apps.googleusercontent.com"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: %s", code, stderr.String())
+	}
+
+	// Get client_id
+	stdout.Reset()
+	stderr.Reset()
+	code = executeConfig([]string{"get", "client_id"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d", code)
+	}
+	if strings.TrimSpace(stdout.String()) != "test-client-id-123.apps.googleusercontent.com" {
+		t.Errorf("expected test-client-id-123.apps.googleusercontent.com, got %s", stdout.String())
+	}
+
+	// Set client_secret
+	stdout.Reset()
+	stderr.Reset()
+	code = executeConfig([]string{"set", "client_secret", "test-secret-456"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: %s", code, stderr.String())
+	}
+
+	// Get client_secret (redacted in output)
+	stdout.Reset()
+	stderr.Reset()
+	code = executeConfig([]string{"get", "client_secret"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d", code)
+	}
+	if strings.TrimSpace(stdout.String()) != "[configured]" {
+		t.Errorf("expected [configured], got %s", stdout.String())
+	}
+
+	// List config
+	stdout.Reset()
+	stderr.Reset()
+	code = executeConfig([]string{"list"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d", code)
+	}
+	if !strings.Contains(stdout.String(), "client_id:") || !strings.Contains(stdout.String(), "client_secret:") {
+		t.Errorf("expected list output to contain client_id and client_secret, got:\n%s", stdout.String())
+	}
+}
