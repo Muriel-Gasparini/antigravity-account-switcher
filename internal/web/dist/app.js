@@ -784,18 +784,29 @@
     return html;
   }
 
-  // Secondary offers the same full model list as primary. The only invariant
-  // (mirroring backend validation) is primary != secondary.
+  // Secondary is scoped to cross-vendor models: tiers within one family share
+  // the same quota pool, so same-family fallback cannot absorb exhaustion.
   function updateSecondaryOptions() {
     if (!selectModelPrimary || !selectModelSecondary) return;
     const primaryVal = selectModelPrimary.value;
+    const primaryCat = getModelCategory(primaryVal);
     let prevSecondary = selectModelSecondary.value || currentAppConfig.model_secondary;
-    if (!prevSecondary || prevSecondary === primaryVal) {
-      const fallback = rawModelsData.map(m => m.id).find(id => id && id !== primaryVal);
-      prevSecondary = fallback || '';
+
+    const groups = groupModelsByCategory();
+    const allowed = primaryCat === 'gemini' ? groups.claudeGpt : groups.gemini;
+    if (!prevSecondary || !allowed.some(m => m.id === prevSecondary)) {
+      prevSecondary = allowed.length > 0 ? allowed[0].id : '';
     }
 
-    selectModelSecondary.innerHTML = buildGroupedOptionsHtml(groupModelsByCategory(), prevSecondary);
+    const label = primaryCat === 'gemini' ? 'Claude & GPT (Standby Fallback)' : 'Google Gemini (Standby Fallback)';
+    let html = `<optgroup label="${label}">`;
+    allowed.forEach(m => {
+      const isSelected = m.id === prevSecondary ? 'selected' : '';
+      const star = m.recommended ? ' ★' : '';
+      html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}${star}</option>`;
+    });
+    html += '</optgroup>';
+    selectModelSecondary.innerHTML = html;
 
     if (prevSecondary && !selectModelSecondary.value) {
       const opt = new Option(prevSecondary, prevSecondary, true, true);
@@ -818,7 +829,7 @@
       selectModelPrimary.add(opt);
     }
 
-    // Secondary shows the same full model list as primary
+    // Secondary scoped to cross-vendor models (see updateSecondaryOptions)
     updateSecondaryOptions();
 
     if (currentSecondary && !selectModelSecondary.value) {
@@ -834,12 +845,16 @@
     const secondaryVal = selectModelSecondary ? selectModelSecondary.value : currentAppConfig.model_secondary;
     const isFallbackEnabled = fallbackToggle ? fallbackToggle.checked : false;
 
-    // Client-side validation mirrors the backend rule: primary != secondary.
-    // Same-family fallback (e.g. gemini pro -> gemini flash) is allowed since
-    // tiers in one family use separate quota buckets.
-    if (isFallbackEnabled && primaryVal && secondaryVal && primaryVal === secondaryVal) {
-      showToast('Primary and Secondary models cannot be identical. Choose two different models.', 'error', 5000);
-      return;
+    // Same-family tiers share one quota pool, so fallback must be cross-vendor
+    // to absorb exhaustion. The backend still accepts any distinct pair via
+    // config file or API; this guard only applies to the dashboard form.
+    if (isFallbackEnabled && primaryVal && secondaryVal) {
+      const pCat = getModelCategory(primaryVal);
+      const sCat = getModelCategory(secondaryVal);
+      if (pCat === sCat) {
+        showToast('Primary and Secondary share the same quota pool. Choose Gemini ↔ Claude/GPT for real failover.', 'error', 5000);
+        return;
+      }
     }
 
     const origText = btnSaveConfig.textContent;
