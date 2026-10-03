@@ -16,6 +16,7 @@ import (
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/oauth"
+	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/proxy"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/quota"
 )
 
@@ -790,7 +791,7 @@ func (a *APIHandler) ensureConfiguredModelsPresent(models []*domain.ModelInfo) [
 		models = append(models, &domain.ModelInfo{
 			ID:          primary,
 			DisplayName: primary,
-			Category:    "gemini",
+			Category:    proxy.CategorizeModel(primary).String(),
 			Recommended: true,
 		})
 		seen[primary] = true
@@ -799,7 +800,7 @@ func (a *APIHandler) ensureConfiguredModelsPresent(models []*domain.ModelInfo) [
 		models = append(models, &domain.ModelInfo{
 			ID:          secondary,
 			DisplayName: secondary,
-			Category:    "gemini",
+			Category:    proxy.CategorizeModel(secondary).String(),
 			Recommended: true,
 		})
 	}
