@@ -734,33 +734,83 @@
     return 'gemini';
   }
 
+  function groupModelsByCategory() {
+    const groups = { gemini: [], claudeGpt: [], other: [] };
+    rawModelsData.forEach(m => {
+      const cat = m.category || getModelCategory(m.id);
+      if (cat === 'gemini') {
+        groups.gemini.push(m);
+      } else if (cat === 'claude_gpt') {
+        groups.claudeGpt.push(m);
+      } else {
+        groups.other.push(m);
+      }
+    });
+    return groups;
+  }
+
+  function buildGroupedOptionsHtml(groups, selectedVal) {
+    let html = '';
+
+    if (groups.gemini.length > 0) {
+      html += '<optgroup label="Google Gemini">';
+      groups.gemini.forEach(m => {
+        const isSelected = m.id === selectedVal ? 'selected' : '';
+        const star = m.recommended ? ' ★' : '';
+        html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}${star}</option>`;
+      });
+      html += '</optgroup>';
+    }
+
+    if (groups.claudeGpt.length > 0) {
+      html += '<optgroup label="Claude & GPT (3P)">';
+      groups.claudeGpt.forEach(m => {
+        const isSelected = m.id === selectedVal ? 'selected' : '';
+        const star = m.recommended ? ' ★' : '';
+        html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}${star}</option>`;
+      });
+      html += '</optgroup>';
+    }
+
+    if (groups.other.length > 0) {
+      html += '<optgroup label="Other Models">';
+      groups.other.forEach(m => {
+        const isSelected = m.id === selectedVal ? 'selected' : '';
+        html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}</option>`;
+      });
+      html += '</optgroup>';
+    }
+
+    return html;
+  }
+
+  // Secondary is scoped to cross-vendor models: tiers within one family share
+  // the same quota pool, so same-family fallback cannot absorb exhaustion.
   function updateSecondaryOptions() {
     if (!selectModelPrimary || !selectModelSecondary) return;
     const primaryVal = selectModelPrimary.value;
     const primaryCat = getModelCategory(primaryVal);
-    const prevSecondary = selectModelSecondary.value || currentAppConfig.model_secondary;
+    let prevSecondary = selectModelSecondary.value || currentAppConfig.model_secondary;
 
-    const allowedModels = rawModelsData.filter(m => {
-      const cat = m.category || getModelCategory(m.id);
-      return cat !== primaryCat;
-    });
+    const groups = groupModelsByCategory();
+    const allowed = primaryCat === 'gemini' ? groups.claudeGpt : groups.gemini;
+    if (!prevSecondary || !allowed.some(m => m.id === prevSecondary)) {
+      prevSecondary = allowed.length > 0 ? allowed[0].id : '';
+    }
 
-    let html = '';
     const label = primaryCat === 'gemini' ? 'Claude & GPT (Standby Fallback)' : 'Google Gemini (Standby Fallback)';
-    html += `<optgroup label="${label}">`;
-    allowedModels.forEach(m => {
+    let html = `<optgroup label="${label}">`;
+    allowed.forEach(m => {
       const isSelected = m.id === prevSecondary ? 'selected' : '';
       const star = m.recommended ? ' ★' : '';
       html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}${star}</option>`;
     });
     html += '</optgroup>';
-
     selectModelSecondary.innerHTML = html;
 
-    // Validate if previously selected model is still in the new option list
-    const stillValid = Array.from(selectModelSecondary.options).some(opt => opt.value === prevSecondary);
-    if (!stillValid && selectModelSecondary.options.length > 0) {
-      selectModelSecondary.selectedIndex = 0;
+    if (prevSecondary && !selectModelSecondary.value) {
+      const opt = new Option(prevSecondary, prevSecondary, true, true);
+      selectModelSecondary.add(opt);
     }
   }
 
@@ -769,57 +819,9 @@
 
     const currentPrimary = currentAppConfig.model_primary || selectModelPrimary.value;
     const currentSecondary = currentAppConfig.model_secondary || selectModelSecondary.value;
+    const groups = groupModelsByCategory();
 
-    const geminiModels = [];
-    const claudeGptModels = [];
-    const otherModels = [];
-
-    rawModelsData.forEach(m => {
-      if (m.category === 'gemini') {
-        geminiModels.push(m);
-      } else if (m.category === 'claude_gpt') {
-        claudeGptModels.push(m);
-      } else {
-        otherModels.push(m);
-      }
-    });
-
-    function buildOptionsHtml(selectedVal) {
-      let html = '';
-
-      if (geminiModels.length > 0) {
-        html += '<optgroup label="Google Gemini">';
-        geminiModels.forEach(m => {
-          const isSelected = m.id === selectedVal ? 'selected' : '';
-          const star = m.recommended ? ' ★' : '';
-          html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}${star}</option>`;
-        });
-        html += '</optgroup>';
-      }
-
-      if (claudeGptModels.length > 0) {
-        html += '<optgroup label="Claude & GPT (3P)">';
-        claudeGptModels.forEach(m => {
-          const isSelected = m.id === selectedVal ? 'selected' : '';
-          const star = m.recommended ? ' ★' : '';
-          html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}${star}</option>`;
-        });
-        html += '</optgroup>';
-      }
-
-      if (otherModels.length > 0) {
-        html += '<optgroup label="Other Models">';
-        otherModels.forEach(m => {
-          const isSelected = m.id === selectedVal ? 'selected' : '';
-          html += `<option value="${escapeHtml(m.id)}" ${isSelected}>${escapeHtml(m.display_name || m.id)}</option>`;
-        });
-        html += '</optgroup>';
-      }
-
-      return html;
-    }
-
-    selectModelPrimary.innerHTML = buildOptionsHtml(currentPrimary);
+    selectModelPrimary.innerHTML = buildGroupedOptionsHtml(groups, currentPrimary);
 
     // If current selection wasn't in list, add explicit option
     if (currentPrimary && !selectModelPrimary.value) {
@@ -827,7 +829,7 @@
       selectModelPrimary.add(opt);
     }
 
-    // Populate secondary options strictly scoped to cross-vendor models
+    // Secondary scoped to cross-vendor models (see updateSecondaryOptions)
     updateSecondaryOptions();
 
     if (currentSecondary && !selectModelSecondary.value) {
@@ -843,12 +845,14 @@
     const secondaryVal = selectModelSecondary ? selectModelSecondary.value : currentAppConfig.model_secondary;
     const isFallbackEnabled = fallbackToggle ? fallbackToggle.checked : false;
 
-    // Client-side cross-vendor validation
+    // Same-family tiers share one quota pool, so fallback must be cross-vendor
+    // to absorb exhaustion. The backend still accepts any distinct pair via
+    // config file or API; this guard only applies to the dashboard form.
     if (isFallbackEnabled && primaryVal && secondaryVal) {
       const pCat = getModelCategory(primaryVal);
       const sCat = getModelCategory(secondaryVal);
       if (pCat === sCat) {
-        showToast('Primary and Secondary models cannot be from the same provider. Choose Gemini ↔ Claude/GPT.', 'error', 5000);
+        showToast('Primary and Secondary share the same quota pool. Choose Gemini ↔ Claude/GPT for real failover.', 'error', 5000);
         return;
       }
     }

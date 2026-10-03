@@ -903,3 +903,41 @@ func TestServer_ModelsAPI(t *testing.T) {
 		t.Errorf("expected 405 Method Not Allowed for POST /api/models, got %d", respPost.StatusCode)
 	}
 }
+
+func TestServer_ConfiguredModels_CategorizedByFamily(t *testing.T) {
+	handler := &APIHandler{
+		appConfig: &config.Config{
+			ModelPrimary:   "claude-opus-5-5-medium",
+			ModelSecondary: "gemini-9-9-flash-ultra",
+		},
+	}
+
+	models := handler.ensureConfiguredModelsPresent(nil)
+
+	byID := make(map[string]*domain.ModelInfo, len(models))
+	for _, m := range models {
+		if m == nil {
+			continue
+		}
+		if _, dup := byID[m.ID]; dup {
+			t.Errorf("duplicate model entry for %q", m.ID)
+		}
+		byID[m.ID] = m
+	}
+
+	primary, ok := byID["claude-opus-5-5-medium"]
+	if !ok {
+		t.Fatal("expected configured primary model to be present")
+	}
+	if primary.Category != "claude_gpt" {
+		t.Errorf("expected claude primary category claude_gpt, got %q", primary.Category)
+	}
+
+	secondary, ok := byID["gemini-9-9-flash-ultra"]
+	if !ok {
+		t.Fatal("expected configured secondary model to be present")
+	}
+	if secondary.Category != "gemini" {
+		t.Errorf("expected gemini secondary category gemini, got %q", secondary.Category)
+	}
+}
