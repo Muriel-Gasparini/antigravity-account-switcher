@@ -19,6 +19,23 @@ const (
 	AccountStatusDisabled AccountStatus = "disabled"
 )
 
+// ModelCategory represents the top-level quota and provider tier for a model.
+type ModelCategory string
+
+const (
+	// CategoryUnknown represents unrecognized model identifiers.
+	CategoryUnknown ModelCategory = "unknown"
+	// CategoryClaudeGPT covers Anthropic Claude and OpenAI GPT third-party models.
+	CategoryClaudeGPT ModelCategory = "claude_gpt"
+	// CategoryGemini covers Google Gemini and Gemma first-party models.
+	CategoryGemini ModelCategory = "gemini"
+)
+
+// String returns the string representation of ModelCategory.
+func (c ModelCategory) String() string {
+	return string(c)
+}
+
 // Account represents a Google user account managed by the switcher.
 type Account struct {
 	ID           string        `json:"id"`
@@ -83,4 +100,14 @@ type AccountRepository interface {
 	// excluding the specified account ID (e.g. the one that encountered 429).
 	// Accounts are ordered by least recently used (updated_at ASC).
 	GetNextAvailable(ctx context.Context, excludeID string) (*Account, error)
+
+	// GetActiveForCategory retrieves the active account designated for a specific model category.
+	GetActiveForCategory(ctx context.Context, category ModelCategory) (*Account, error)
+
+	// SetActiveForCategory sets the active account pointer for a specific model category.
+	SetActiveForCategory(ctx context.Context, category ModelCategory, accountID string) error
+
+	// GetNextAvailableForCategory selects the next eligible account for a model category,
+	// excluding the specified account ID and accounts whose quota for that category is exhausted.
+	GetNextAvailableForCategory(ctx context.Context, category ModelCategory, excludeID string) (*Account, error)
 }

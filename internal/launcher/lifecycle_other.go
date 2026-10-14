@@ -2,9 +2,14 @@
 
 package launcher
 
-import "os/exec"
+import (
+	"os/exec"
+	"syscall"
+)
 
-// SetDeathSig is a no-op on non-Linux platforms where PDEATHSIG is unavailable.
+// SetDeathSig ensures SysProcAttr is initialized on non-Linux platforms where PDEATHSIG is unavailable.
 func SetDeathSig(cmd *exec.Cmd) {
-	// Pdeathsig is a Linux-specific feature.
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
 }

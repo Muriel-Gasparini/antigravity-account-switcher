@@ -507,16 +507,49 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	isCloudCode := !isExplicitForwardToOther
 
+	// 2. Capture original request baseline and model category
+	origModel, origCategory, _ := ExtractModelFromRequest(r, buffered.Bytes())
+	if origCategory == CategoryUnknown && origModel != "" {
+		origCategory = CategorizeModel(origModel)
+	}
+	origPath := r.URL.Path
+	origQuery := r.URL.RawQuery
+	origBody := buffered.Bytes()
+
+	currentModel := origModel
+	currentCategory := origCategory
+	currentPath := origPath
+	currentQuery := origQuery
+	currentBody := origBody
+
 	var currentAcc *domain.Account
 	isPassThrough := false
 
 	if isCloudCode {
-		// Resolve active account from repository
-		acc, accErr := h.accountRepo.GetActive(ctx)
+		// Resolve active account specifically for that model category
+		var acc *domain.Account
+		var accErr error
+		if origCategory != CategoryUnknown {
+			acc, accErr = h.accountRepo.GetActiveForCategory(ctx, origCategory)
+		}
 		if accErr != nil || acc == nil {
-			nextAcc, nextErr := h.accountRepo.GetNextAvailable(ctx, "")
+			acc, accErr = h.accountRepo.GetActive(ctx)
+		}
+		if accErr != nil || acc == nil {
+			var nextAcc *domain.Account
+			var nextErr error
+			if origCategory != CategoryUnknown {
+				nextAcc, nextErr = h.accountRepo.GetNextAvailableForCategory(ctx, origCategory, "")
+			}
+			if nextErr != nil || nextAcc == nil {
+				nextAcc, nextErr = h.accountRepo.GetNextAvailable(ctx, "")
+			}
 			if nextErr == nil && nextAcc != nil {
-				_ = h.accountRepo.SetActive(ctx, nextAcc.ID)
+				if origCategory != CategoryUnknown {
+					_ = h.accountRepo.SetActiveForCategory(ctx, origCategory, nextAcc.ID)
+				} else {
+					_ = h.accountRepo.SetActive(ctx, nextAcc.ID)
+				}
 				currentAcc = nextAcc
 			} else {
 				// No accounts in pool: if client provided an Authorization header, pass it through;
@@ -537,42 +570,13 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		isPassThrough = true
 	}
 
-	// 2. Capture original request baseline
-	origModel, _, _ := ExtractModelFromRequest(r, buffered.Bytes())
-	origPath := r.URL.Path
-	origQuery := r.URL.RawQuery
-	origBody := buffered.Bytes()
-
-	currentModel := origModel
-	currentPath := origPath
-	currentQuery := origQuery
-	currentBody := origBody
-
-	// Force primary model configured in the dashboard (source of truth) unless client already requests secondary
-	if isCloudCode && !isPassThrough && h.failoverEngine != nil {
-		h.failoverEngine.mu.RLock()
-		primary := h.failoverEngine.modelPrimary
-		secondary := h.failoverEngine.modelSecondary
-		h.failoverEngine.mu.RUnlock()
-
-		if primary != "" && origModel != "" &&
-			NormalizeModelName(origModel) != NormalizeModelName(primary) &&
-			(secondary == "" || NormalizeModelName(origModel) != NormalizeModelName(secondary)) {
-			buffered = h.rewriteRequestModel(r, buffered, primary)
-			origModel = primary
-			currentModel = primary
-			currentPath = r.URL.Path
-			currentQuery = r.URL.RawQuery
-			currentBody = buffered.Bytes()
-		}
-	}
-
 	// Predictive fallback check before initial upstream dispatch
 	if isCloudCode && !isPassThrough && currentAcc != nil && origModel != "" {
 		newBuffered, targetModel, rewritten := h.applyPredictiveFallback(ctx, currentAcc, r, buffered)
 		if rewritten {
 			buffered = newBuffered
 			currentModel = targetModel
+			currentCategory = CategorizeModel(targetModel)
 			currentPath = r.URL.Path
 			currentQuery = r.URL.RawQuery
 			currentBody = buffered.Bytes()
@@ -830,6 +834,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						// Account rotated: switch to nextAcc, reset back to primary model and original body
 						currentAcc = nextAcc
 						currentModel = origModel
+						currentCategory = origCategory
 						currentPath = origPath
 						currentQuery = origQuery
 						currentBody = origBody
@@ -840,6 +845,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						if origModel != "" {
 							if shouldRewrite, tgtModel, pErr := h.failoverEngine.PredictiveCheck(ctx, currentAcc, origModel); pErr == nil && shouldRewrite {
 								currentModel = tgtModel
+								currentCategory = CategorizeModel(tgtModel)
 								currentPath = RewriteModelInPath(origPath, tgtModel)
 								if origQuery != "" {
 									currentQuery = RewriteModelInQuery(origQuery, tgtModel)
@@ -861,14 +867,25 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 				} else {
-					nextAcc, rotateErr := h.accountRepo.GetNextAvailable(ctx, currentAcc.ID)
+					var nextAcc *domain.Account
+					var rotateErr error
+					if currentCategory != CategoryUnknown {
+						nextAcc, rotateErr = h.accountRepo.GetNextAvailableForCategory(ctx, currentCategory, currentAcc.ID)
+					}
+					if rotateErr != nil || nextAcc == nil {
+						nextAcc, rotateErr = h.accountRepo.GetNextAvailable(ctx, currentAcc.ID)
+					}
 					if rotateErr != nil || nextAcc == nil {
 						forwardTerminal()
 						return
 					}
 					discardAndClose()
-					_ = h.accountRepo.UpdateStatus(ctx, currentAcc.ID, domain.AccountStatusExhausted)
-					_ = h.accountRepo.SetActive(ctx, nextAcc.ID)
+					if currentCategory != CategoryUnknown {
+						_ = h.accountRepo.SetActiveForCategory(ctx, currentCategory, nextAcc.ID)
+					} else {
+						_ = h.accountRepo.UpdateStatus(ctx, currentAcc.ID, domain.AccountStatusExhausted)
+						_ = h.accountRepo.SetActive(ctx, nextAcc.ID)
+					}
 					currentAcc = nextAcc
 					continue
 				}

@@ -480,6 +480,10 @@ func (f *FailoverEngine) isPrimaryModelLocked(model string) bool {
 	if strings.EqualFold(norm, f.normPrimary) {
 		return true
 	}
+	cat := CategorizeModel(norm)
+	if f.primaryCat != CategoryUnknown && cat != CategoryUnknown && cat != f.primaryCat {
+		return false
+	}
 	lowerNorm := strings.ToLower(norm)
 	if f.primaryHasFlash && strings.Contains(lowerNorm, "flash") && !strings.Contains(lowerNorm, "pro") {
 		return true
@@ -488,7 +492,6 @@ func (f *FailoverEngine) isPrimaryModelLocked(model string) bool {
 		return true
 	}
 
-	cat := CategorizeModel(norm)
 	return cat != CategoryUnknown && cat == f.primaryCat && cat != f.secondaryCat
 }
 
@@ -500,6 +503,10 @@ func (f *FailoverEngine) isSecondaryModelLocked(model string) bool {
 	if strings.EqualFold(norm, f.normSecondary) {
 		return true
 	}
+	cat := CategorizeModel(norm)
+	if f.secondaryCat != CategoryUnknown && cat != CategoryUnknown && cat != f.secondaryCat {
+		return false
+	}
 	lowerNorm := strings.ToLower(norm)
 	if f.secondaryHasFlash && strings.Contains(lowerNorm, "flash") && !strings.Contains(lowerNorm, "pro") {
 		return true
@@ -508,7 +515,6 @@ func (f *FailoverEngine) isSecondaryModelLocked(model string) bool {
 		return true
 	}
 
-	cat := CategorizeModel(norm)
 	return cat != CategoryUnknown && cat == f.secondaryCat && cat != f.primaryCat
 }
 
@@ -689,10 +695,11 @@ func (f *FailoverEngine) PredictiveCheck(
 
 	// Fast check if matches primary
 	lowerNormReq := strings.ToLower(normReq)
+	catReqMatches := priCat == CategoryUnknown || catReq == CategoryUnknown || catReq == priCat
 	matchesPrimary := strings.EqualFold(normReq, normPri) ||
-		(priCat != CategoryUnknown && priCat != secCat && catReq == priCat) ||
-		(priHasPro && strings.Contains(lowerNormReq, "pro") && !strings.Contains(lowerNormReq, "flash")) ||
-		(priHasFlash && strings.Contains(lowerNormReq, "flash") && !strings.Contains(lowerNormReq, "pro"))
+		(catReqMatches && priCat != CategoryUnknown && priCat != secCat && catReq == priCat) ||
+		(catReqMatches && priHasPro && strings.Contains(lowerNormReq, "pro") && !strings.Contains(lowerNormReq, "flash")) ||
+		(catReqMatches && priHasFlash && strings.Contains(lowerNormReq, "flash") && !strings.Contains(lowerNormReq, "pro"))
 
 	if !matchesPrimary {
 		f.mu.RUnlock()
@@ -897,33 +904,59 @@ func (f *FailoverEngine) HandleExhaustion(
 	primary := f.effectivePrimaryModel()
 	secondary := f.effectiveSecondaryModel()
 
-	// 1. Anti-stampede check: Did another concurrent request already rotate away from acc?
-	currentActive, err := f.accountRepo.GetActive(ctx)
+	failedCat := CategorizeModel(failedModel)
+	if failedCat == CategoryUnknown && failedModel != "" {
+		if f.isPrimaryModelLocked(failedModel) {
+			failedCat = f.primaryCat
+		} else if f.isSecondaryModelLocked(failedModel) {
+			failedCat = f.secondaryCat
+		}
+	}
+
+	// 1. Anti-stampede check: Did another concurrent request already rotate away from acc for this category?
+	var currentActive *domain.Account
+	if failedCat != CategoryUnknown {
+		currentActive, err = f.accountRepo.GetActiveForCategory(ctx, failedCat)
+	} else {
+		currentActive, err = f.accountRepo.GetActive(ctx)
+	}
 	if err == nil && currentActive != nil && currentActive.ID != acc.ID && currentActive.IsAvailable() {
 		return ActionRotateAccount, primary, currentActive, nil
 	}
 
-	// 2. If fallback is disabled or no model was requested, rotate immediately to next account
+	// 2. If fallback is disabled or no model was requested, rotate immediately to next account for this category
 	if !f.fallbackSecondaryEnabled || strings.TrimSpace(failedModel) == "" {
-		next, rotErr := f.rotateAccountLocked(ctx, acc, &eventsToEmit)
+		next, rotErr := f.rotateAccountForCategoryLocked(ctx, acc, failedCat, &eventsToEmit)
 		if rotErr != nil {
 			return ActionRotateAccount, primary, nil, rotErr
 		}
 		return ActionRotateAccount, primary, next, nil
 	}
 
-	// 3. Fallback is enabled: retrieve or initialize account state
+	// 3. Fallback is enabled: check if model belongs to fallback tier
+	isPrimary := f.isPrimaryModelLocked(failedModel)
+	isSecondary := f.isSecondaryModelLocked(failedModel)
+
+	// If failed model is neither primary nor secondary, it is outside the fallback tier:
+	// rotate immediately for this category without mutating primary/secondary fallback state.
+	if !isPrimary && !isSecondary {
+		next, rotErr := f.rotateAccountForCategoryLocked(ctx, acc, failedCat, &eventsToEmit)
+		if rotErr != nil {
+			return ActionRotateAccount, primary, nil, rotErr
+		}
+		return ActionRotateAccount, primary, next, nil
+	}
+
 	state, exists := f.accountStates[acc.ID]
 	if !exists {
 		state = &accountFallbackState{}
 		f.accountStates[acc.ID] = state
 	}
 
-	isSecondary := f.isSecondaryModelLocked(failedModel)
 	hasSecondaryQuota := f.hasSecondaryQuotaLocked(ctx, acc, state)
 
 	// 4. If failedModel was primary and secondary has available quota: intra-account fallback!
-	if !isSecondary && hasSecondaryQuota {
+	if isPrimary && hasSecondaryQuota {
 		wasPrimaryExhausted := state.primaryExhausted
 		state.primaryExhausted = true
 		state.lastFallback = time.Now().UTC()
@@ -997,7 +1030,7 @@ func (f *FailoverEngine) HandleExhaustion(
 		f.markModelExhaustedLocked(acc.ID, secondary, secReset)
 	}
 
-	next, rotErr := f.rotateAccountLocked(ctx, acc, &eventsToEmit)
+	next, rotErr := f.rotateAccountForCategoryLocked(ctx, acc, failedCat, &eventsToEmit)
 	if rotErr != nil {
 		return ActionRotateAccount, primary, nil, rotErr
 	}
@@ -1008,6 +1041,11 @@ func (f *FailoverEngine) HandleExhaustion(
 // RotateAccount handles failover for an account that received HTTP 429 / RESOURCE_EXHAUSTED.
 // Retained for backward compatibility and direct rotation invocations.
 func (f *FailoverEngine) RotateAccount(ctx context.Context, exhaustedAcc *domain.Account) (*domain.Account, error) {
+	return f.RotateAccountForCategory(ctx, exhaustedAcc, CategoryUnknown)
+}
+
+// RotateAccountForCategory handles failover for an account on a specific model category.
+func (f *FailoverEngine) RotateAccountForCategory(ctx context.Context, exhaustedAcc *domain.Account, category ModelCategory) (*domain.Account, error) {
 	if exhaustedAcc == nil {
 		return nil, domain.ErrAccountNotFound
 	}
@@ -1022,12 +1060,21 @@ func (f *FailoverEngine) RotateAccount(ctx context.Context, exhaustedAcc *domain
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return f.rotateAccountLocked(ctx, exhaustedAcc, &eventsToEmit)
+	return f.rotateAccountForCategoryLocked(ctx, exhaustedAcc, category, &eventsToEmit)
 }
 
 func (f *FailoverEngine) rotateAccountLocked(
 	ctx context.Context,
 	exhaustedAcc *domain.Account,
+	eventsToEmit *[]*domain.ProxyEvent,
+) (*domain.Account, error) {
+	return f.rotateAccountForCategoryLocked(ctx, exhaustedAcc, CategoryUnknown, eventsToEmit)
+}
+
+func (f *FailoverEngine) rotateAccountForCategoryLocked(
+	ctx context.Context,
+	exhaustedAcc *domain.Account,
+	category ModelCategory,
 	eventsToEmit *[]*domain.ProxyEvent,
 ) (*domain.Account, error) {
 	emit := func(ev *domain.ProxyEvent) {
@@ -1038,14 +1085,42 @@ func (f *FailoverEngine) rotateAccountLocked(
 		}
 	}
 
-	// 1. Anti-stampede check: Did another concurrent request already rotate away from exhaustedAcc?
-	currentActive, err := f.accountRepo.GetActive(ctx)
+	// 1. Anti-stampede check: Did another concurrent request already rotate away from exhaustedAcc for this category?
+	var currentActive *domain.Account
+	var err error
+	if category != CategoryUnknown {
+		currentActive, err = f.accountRepo.GetActiveForCategory(ctx, category)
+	} else {
+		currentActive, err = f.accountRepo.GetActive(ctx)
+	}
 	if err == nil && currentActive != nil && currentActive.ID != exhaustedAcc.ID && currentActive.IsAvailable() {
 		delete(f.accountStates, currentActive.ID)
 		return currentActive, nil
 	}
 
-	// 2. Mark the exhausted account in the repository
+	// 2. Mark the exhausted account in the repository and quota persistence
+	resetDuration := 5 * time.Hour
+	resetTime := time.Now().UTC().Add(resetDuration)
+	if category != CategoryUnknown {
+		f.markCategoryExhaustedLocked(exhaustedAcc.ID, category, resetTime)
+		if f.quotaRepo != nil {
+			bucketID := exhaustedAcc.ID + "-" + category.String()
+			displayName := category.String() + " models"
+			_ = f.quotaRepo.UpsertBuckets(ctx, []*domain.QuotaBucket{
+				{
+					AccountID:         exhaustedAcc.ID,
+					BucketID:          bucketID,
+					DisplayName:       displayName,
+					Window:            domain.QuotaWindowDaily,
+					RemainingFraction: 0.0,
+					RemainingAmount:   0,
+					ResetTime:         resetTime,
+					UpdatedAt:         time.Now().UTC(),
+				},
+			})
+		}
+	}
+
 	if err := f.accountRepo.UpdateStatus(ctx, exhaustedAcc.ID, domain.AccountStatusExhausted); err != nil {
 		emit(&domain.ProxyEvent{
 			Type:      domain.EventTypeError,
@@ -1056,22 +1131,33 @@ func (f *FailoverEngine) rotateAccountLocked(
 	}
 
 	// Broadcast EventTypeFailover429
+	msg := fmt.Sprintf("Account %s (%s) marked exhausted due to HTTP 429 / RESOURCE_EXHAUSTED", exhaustedAcc.Email, exhaustedAcc.ID)
+	details := map[string]any{
+		"account_id": exhaustedAcc.ID,
+		"email":      exhaustedAcc.Email,
+		"reason":     "RESOURCE_EXHAUSTED",
+	}
+	if category != CategoryUnknown {
+		details["category"] = category.String()
+	}
 	emit(&domain.ProxyEvent{
 		Type:      domain.EventTypeFailover429,
 		AccountID: exhaustedAcc.ID,
-		Message:   fmt.Sprintf("Account %s (%s) marked exhausted due to HTTP 429 / RESOURCE_EXHAUSTED", exhaustedAcc.Email, exhaustedAcc.ID),
-		Details: map[string]any{
-			"account_id": exhaustedAcc.ID,
-			"email":      exhaustedAcc.Email,
-			"reason":     "RESOURCE_EXHAUSTED",
-		},
+		Message:   msg,
+		Details:   details,
 		Timestamp: time.Now().UTC(),
 	})
 
-	// 3. Find next available account
-	nextAcc, err := f.accountRepo.GetNextAvailable(ctx, exhaustedAcc.ID)
+	// 3. Find next available account for this category
+	var nextAcc *domain.Account
+	if category != CategoryUnknown {
+		nextAcc, err = f.accountRepo.GetNextAvailableForCategory(ctx, category, exhaustedAcc.ID)
+	} else {
+		nextAcc, err = f.accountRepo.GetNextAvailable(ctx, exhaustedAcc.ID)
+	}
+
 	if err != nil || nextAcc == nil {
-		// Pool is completely exhausted
+		// Category (or pool) is completely exhausted
 		emit(&domain.ProxyEvent{
 			Type:      domain.EventTypeQuotaExhausted,
 			AccountID: exhaustedAcc.ID,
@@ -1085,25 +1171,35 @@ func (f *FailoverEngine) rotateAccountLocked(
 		return nil, domain.ErrNoAvailableAccount
 	}
 
-	// 4. Set next account active atomically
-	if err := f.accountRepo.SetActive(ctx, nextAcc.ID); err != nil {
-		return nil, fmt.Errorf("failed to set active account to %s: %w", nextAcc.ID, err)
+	// 4. Set next account active atomically for this category
+	if category != CategoryUnknown {
+		if err := f.accountRepo.SetActiveForCategory(ctx, category, nextAcc.ID); err != nil {
+			return nil, fmt.Errorf("failed to set active account for category %s to %s: %w", category.String(), nextAcc.ID, err)
+		}
+	} else {
+		if err := f.accountRepo.SetActive(ctx, nextAcc.ID); err != nil {
+			return nil, fmt.Errorf("failed to set active account to %s: %w", nextAcc.ID, err)
+		}
 	}
 
 	// Reset fallback state on the newly activated account
 	delete(f.accountStates, nextAcc.ID)
 
 	// Broadcast EventTypeAccountSwitched
+	switchDetails := map[string]any{
+		"from_account_id": exhaustedAcc.ID,
+		"from_email":      exhaustedAcc.Email,
+		"to_account_id":   nextAcc.ID,
+		"to_email":        nextAcc.Email,
+	}
+	if category != CategoryUnknown {
+		switchDetails["category"] = category.String()
+	}
 	emit(&domain.ProxyEvent{
 		Type:      domain.EventTypeAccountSwitched,
 		AccountID: nextAcc.ID,
 		Message:   fmt.Sprintf("Rotated active account from %s to %s", exhaustedAcc.Email, nextAcc.Email),
-		Details: map[string]any{
-			"from_account_id": exhaustedAcc.ID,
-			"from_email":      exhaustedAcc.Email,
-			"to_account_id":   nextAcc.ID,
-			"to_email":        nextAcc.Email,
-		},
+		Details:   switchDetails,
 		Timestamp: time.Now().UTC(),
 	})
 

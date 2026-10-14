@@ -50,6 +50,15 @@ func (m *mockAccountRepo) Delete(ctx context.Context, id string) error { return 
 func (m *mockAccountRepo) GetNextAvailable(ctx context.Context, excludeID string) (*domain.Account, error) {
 	return nil, nil
 }
+func (m *mockAccountRepo) GetActiveForCategory(ctx context.Context, category domain.ModelCategory) (*domain.Account, error) {
+	return nil, nil
+}
+func (m *mockAccountRepo) SetActiveForCategory(ctx context.Context, category domain.ModelCategory, accountID string) error {
+	return nil
+}
+func (m *mockAccountRepo) GetNextAvailableForCategory(ctx context.Context, category domain.ModelCategory, excludeID string) (*domain.Account, error) {
+	return nil, nil
+}
 
 type mockMetricsRepo struct {
 	summaryRes        *domain.AggregatedMetrics

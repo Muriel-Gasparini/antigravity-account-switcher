@@ -43,13 +43,19 @@ func (r *AccountRepository) Create(ctx context.Context, acc *domain.Account) err
 		expiryStr = "1970-01-01T00:00:00Z"
 	}
 
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	query := `
 		INSERT INTO accounts (
 			id, email, refresh_token, access_token, token_expiry,
 			is_active, status, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := r.db.ExecContext(ctx, query,
+	_, err = tx.ExecContext(ctx, query,
 		acc.ID,
 		acc.Email,
 		acc.RefreshToken,
@@ -67,7 +73,16 @@ func (r *AccountRepository) Create(ctx context.Context, acc *domain.Account) err
 		return fmt.Errorf("failed to create account: %w", err)
 	}
 
-	return nil
+	if acc.IsActive {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO active_category_accounts (category, account_id) VALUES ('claude_gpt', ?), ('gemini', ?)
+			ON CONFLICT(category) DO UPDATE SET account_id = excluded.account_id
+		`, acc.ID, acc.ID); err != nil {
+			return fmt.Errorf("failed to seed active_category_accounts on create: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetByID retrieves an account by ID.
@@ -160,6 +175,14 @@ func (r *AccountRepository) SetActive(ctx context.Context, id string) error {
 	}
 	if affected == 0 {
 		return domain.ErrAccountNotFound
+	}
+
+	// Step 3: Populate active_category_accounts for both categories
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO active_category_accounts (category, account_id) VALUES ('claude_gpt', ?), ('gemini', ?)
+		ON CONFLICT(category) DO UPDATE SET account_id = excluded.account_id
+	`, id, id); err != nil {
+		return fmt.Errorf("failed to update active_category_accounts: %w", err)
 	}
 
 	return tx.Commit()
@@ -257,6 +280,132 @@ func (r *AccountRepository) GetNextAvailable(ctx context.Context, excludeID stri
 		LIMIT 1
 	`
 	row := r.db.QueryRowContext(ctx, query, excludeID, excludeID)
+	acc, err := r.scanAccount(row)
+	if errors.Is(err, domain.ErrAccountNotFound) {
+		return nil, domain.ErrNoAvailableAccount
+	}
+	return acc, err
+}
+
+// GetActiveForCategory retrieves the active account designated for a specific model category.
+func (r *AccountRepository) GetActiveForCategory(ctx context.Context, category domain.ModelCategory) (*domain.Account, error) {
+	catStr := category.String()
+	if catStr == "unknown" || catStr == "" {
+		return r.GetActive(ctx)
+	}
+
+	query := `
+		SELECT a.id, a.email, a.refresh_token, a.access_token, a.token_expiry, a.is_active, a.status, a.created_at, a.updated_at
+		FROM accounts a
+		JOIN active_category_accounts aca ON a.id = aca.account_id
+		WHERE aca.category = ?
+		LIMIT 1
+	`
+	row := r.db.QueryRowContext(ctx, query, catStr)
+	acc, err := r.scanAccount(row)
+	if err == nil {
+		return acc, nil
+	}
+
+	if errors.Is(err, domain.ErrAccountNotFound) {
+		globalActive, gErr := r.GetActive(ctx)
+		if gErr == nil && globalActive != nil {
+			_, _ = r.db.ExecContext(ctx, `
+				INSERT OR IGNORE INTO active_category_accounts (category, account_id)
+				VALUES (?, ?)
+			`, catStr, globalActive.ID)
+			return globalActive, nil
+		}
+		return nil, domain.ErrNoActiveAccount
+	}
+
+	return nil, err
+}
+
+// SetActiveForCategory sets the active account pointer for a specific model category.
+// It keeps accounts.is_active updated for full backward compatibility.
+func (r *AccountRepository) SetActiveForCategory(ctx context.Context, category domain.ModelCategory, accountID string) error {
+	if accountID == "" {
+		return domain.ErrAccountNotFound
+	}
+	catStr := category.String()
+	if catStr == "unknown" || catStr == "" {
+		return r.SetActive(ctx, accountID)
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+
+	// 1. Verify target account exists
+	var count int
+	err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM accounts WHERE id = ?", accountID).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to verify account %s: %w", accountID, err)
+	}
+	if count == 0 {
+		return domain.ErrAccountNotFound
+	}
+
+	// 2. Upsert into active_category_accounts
+	upsertSQL := `
+		INSERT INTO active_category_accounts (category, account_id)
+		VALUES (?, ?)
+		ON CONFLICT(category) DO UPDATE SET account_id = excluded.account_id
+	`
+	if _, err := tx.ExecContext(ctx, upsertSQL, catStr, accountID); err != nil {
+		return fmt.Errorf("failed to set active account for category %s: %w", catStr, err)
+	}
+
+	// 3. Keep accounts.is_active updated for backward compatibility (at most one account has is_active = 1)
+	if _, err := tx.ExecContext(ctx, "UPDATE accounts SET is_active = 0, updated_at = ? WHERE is_active = 1 AND id != ?", nowStr, accountID); err != nil {
+		return fmt.Errorf("failed to deactivate previous active account: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE accounts SET is_active = 1, status = 'active', updated_at = ? WHERE id = ?", nowStr, accountID); err != nil {
+		return fmt.Errorf("failed to activate target account %s: %w", accountID, err)
+	}
+
+	return tx.Commit()
+}
+
+// GetNextAvailableForCategory selects the next eligible account for a model category,
+// excluding the specified account ID and accounts whose quota for that category is exhausted.
+func (r *AccountRepository) GetNextAvailableForCategory(ctx context.Context, category domain.ModelCategory, excludeID string) (*domain.Account, error) {
+	catStr := category.String()
+	if catStr == "unknown" || catStr == "" {
+		return r.GetNextAvailable(ctx, excludeID)
+	}
+
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	query := `
+		SELECT a.id, a.email, a.refresh_token, a.access_token, a.token_expiry, a.is_active, a.status, a.created_at, a.updated_at
+		FROM accounts a
+		WHERE a.status = 'active'
+		  AND (? = '' OR a.id != ?)
+		  AND NOT EXISTS (
+			  SELECT 1 FROM quota_buckets qb
+			  WHERE qb.account_id = a.id
+			    AND qb.remaining_fraction <= 0.0
+			    AND qb.reset_time > ?
+			    AND (
+				    (? = 'claude_gpt' AND (
+					    LOWER(qb.bucket_id) LIKE '%claude%' OR LOWER(qb.bucket_id) LIKE '%gpt%' OR LOWER(qb.bucket_id) LIKE '%3p%' OR
+					    LOWER(qb.display_name) LIKE '%claude%' OR LOWER(qb.display_name) LIKE '%gpt%' OR LOWER(qb.display_name) LIKE '%3p%'
+				    ))
+				    OR
+				    (? = 'gemini' AND (
+					    LOWER(qb.bucket_id) LIKE '%gemini%' OR LOWER(qb.display_name) LIKE '%gemini%'
+				    ))
+			    )
+		  )
+		ORDER BY a.updated_at ASC
+		LIMIT 1
+	`
+	row := r.db.QueryRowContext(ctx, query, excludeID, excludeID, nowStr, catStr, catStr)
 	acc, err := r.scanAccount(row)
 	if errors.Is(err, domain.ErrAccountNotFound) {
 		return nil, domain.ErrNoAvailableAccount
