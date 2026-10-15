@@ -28,28 +28,16 @@ var (
 )
 
 // ModelCategory represents the top-level quota and provider tier for a model.
-type ModelCategory int
+type ModelCategory = domain.ModelCategory
 
 const (
 	// CategoryUnknown represents unrecognized model identifiers.
-	CategoryUnknown ModelCategory = iota
+	CategoryUnknown = domain.CategoryUnknown
 	// CategoryClaudeGPT covers Anthropic Claude and OpenAI GPT third-party models.
-	CategoryClaudeGPT
+	CategoryClaudeGPT = domain.CategoryClaudeGPT
 	// CategoryGemini covers Google Gemini and Gemma first-party models.
-	CategoryGemini
+	CategoryGemini = domain.CategoryGemini
 )
-
-// String returns a canonical string representation of the ModelCategory.
-func (c ModelCategory) String() string {
-	switch c {
-	case CategoryClaudeGPT:
-		return "claude_gpt"
-	case CategoryGemini:
-		return "gemini"
-	default:
-		return "unknown"
-	}
-}
 
 // ModelSource identifies where the model was discovered in the request.
 type ModelSource string

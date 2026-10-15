@@ -91,6 +91,17 @@ CREATE TABLE IF NOT EXISTS proxy_events (
 CREATE INDEX IF NOT EXISTS idx_proxy_events_created_at ON proxy_events(created_at);
 `,
 	},
+	{
+		Version:     2,
+		Description: "active_category_accounts",
+		SQL: `
+-- 6. Model category active accounts table
+CREATE TABLE IF NOT EXISTS active_category_accounts (
+    category TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE
+);
+`,
+	},
 }
 
 // Migrate applies all pending schema migrations to the database.
@@ -137,6 +148,16 @@ func Migrate(db *DB) error {
 			_ = tx.Rollback()
 			return fmt.Errorf("failed to commit migration %d: %w", m.Version, err)
 		}
+	}
+
+	// Seed active_category_accounts if empty and an active account exists
+	seedSQL := `
+	INSERT OR IGNORE INTO active_category_accounts (category, account_id)
+	SELECT 'claude_gpt', id FROM accounts WHERE is_active = 1
+	UNION ALL
+	SELECT 'gemini', id FROM accounts WHERE is_active = 1;`
+	if _, err := db.ExecContext(ctx, seedSQL); err != nil {
+		return fmt.Errorf("failed to seed active_category_accounts: %w", err)
 	}
 
 	return nil

@@ -13,13 +13,15 @@ import (
 )
 
 type mockAccountRepo struct {
-	mu       sync.Mutex
-	accounts map[string]*domain.Account
+	mu             sync.Mutex
+	accounts       map[string]*domain.Account
+	categoryActive map[domain.ModelCategory]string
 }
 
 func newMockAccountRepo() *mockAccountRepo {
 	return &mockAccountRepo{
-		accounts: make(map[string]*domain.Account),
+		accounts:       make(map[string]*domain.Account),
+		categoryActive: make(map[domain.ModelCategory]string),
 	}
 }
 
@@ -159,6 +161,45 @@ func (m *mockAccountRepo) GetNextAvailable(ctx context.Context, excludeID string
 	}
 	cp := *best
 	return &cp, nil
+}
+
+func (m *mockAccountRepo) GetActiveForCategory(ctx context.Context, category domain.ModelCategory) (*domain.Account, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if id, ok := m.categoryActive[category]; ok {
+		if acc, ok := m.accounts[id]; ok {
+			cp := *acc
+			return &cp, nil
+		}
+	}
+	for _, acc := range m.accounts {
+		if acc.IsActive {
+			cp := *acc
+			return &cp, nil
+		}
+	}
+	return nil, domain.ErrNoActiveAccount
+}
+
+func (m *mockAccountRepo) SetActiveForCategory(ctx context.Context, category domain.ModelCategory, accountID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	target, ok := m.accounts[accountID]
+	if !ok {
+		return domain.ErrAccountNotFound
+	}
+	m.categoryActive[category] = accountID
+	for _, acc := range m.accounts {
+		acc.IsActive = false
+	}
+	target.IsActive = true
+	target.Status = domain.AccountStatusActive
+	target.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+func (m *mockAccountRepo) GetNextAvailableForCategory(ctx context.Context, category domain.ModelCategory, excludeID string) (*domain.Account, error) {
+	return m.GetNextAvailable(ctx, excludeID)
 }
 
 type mockEventRepo struct {
