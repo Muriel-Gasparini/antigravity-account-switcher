@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
@@ -429,14 +431,23 @@ func runAddAccount(args []string) {
 }
 
 func runListAccounts(args []string) {
-	fs := flag.NewFlagSet("list-accounts", flag.ExitOnError)
+	if code := executeListAccounts(args, os.Stdout, os.Stderr); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func executeListAccounts(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("list-accounts", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	dbPath := fs.String("db", defaultDBPath(), "Path to SQLite database file")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
 
 	db, err := sqlite.Open(*dbPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
 	}
 	defer db.Close()
 
@@ -446,19 +457,134 @@ func runListAccounts(args []string) {
 
 	accounts, err := accRepo.List(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to list accounts: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "Failed to list accounts: %v\n", err)
+		return 1
 	}
 
 	if len(accounts) == 0 {
-		fmt.Println("No accounts registered yet. Run 'add-account' to add one.")
-		return
+		fmt.Fprintln(stdout, "No accounts registered yet. Run 'add-account' to add one.")
+		return 0
 	}
 
 	allBuckets, _ := quotaRepo.ListAll(ctx)
+	if allBuckets == nil {
+		allBuckets = make(map[string][]*domain.QuotaBucket)
+	}
 
-	fmt.Printf("%-36s  %-30s  %-10s  %-8s  %-12s  %-12s\n", "ID", "EMAIL", "STATUS", "ACTIVE", "DAILY QUOTA", "WEEKLY QUOTA")
-	fmt.Println("-------------------------------------------------------------------------------------------------------------")
+	renderAccountsTable(stdout, accounts, allBuckets)
+	return 0
+}
+
+func extractCanonicalFamilyAndWindow(b *domain.QuotaBucket) (string, string) {
+	if b == nil {
+		return "Default", "quota"
+	}
+
+	window := strings.TrimSpace(string(b.Window))
+	name := strings.TrimSpace(b.DisplayName)
+
+	if name == "" {
+		name = strings.TrimSpace(b.BucketID)
+		if b.AccountID != "" {
+			name = strings.TrimPrefix(name, b.AccountID+"-")
+			name = strings.TrimPrefix(name, b.AccountID+"_")
+		}
+	}
+
+	// 1. Check for parenthesized or bracketed suffix, e.g. " (5h)", " (weekly)", " [5h]"
+	// Strip only if the inner string matches the bucket's known window or window is empty.
+	if idx := strings.LastIndex(name, "("); idx != -1 && strings.HasSuffix(name, ")") {
+		inside := strings.TrimSpace(name[idx+1 : len(name)-1])
+		if inside != "" {
+			if window == "" {
+				window = inside
+				name = strings.TrimSpace(name[:idx])
+			} else if strings.EqualFold(inside, window) {
+				name = strings.TrimSpace(name[:idx])
+			}
+		}
+	} else if idx := strings.LastIndex(name, "["); idx != -1 && strings.HasSuffix(name, "]") {
+		inside := strings.TrimSpace(name[idx+1 : len(name)-1])
+		if inside != "" {
+			if window == "" {
+				window = inside
+				name = strings.TrimSpace(name[:idx])
+			} else if strings.EqualFold(inside, window) {
+				name = strings.TrimSpace(name[:idx])
+			}
+		}
+	}
+
+	// 2. If window is known, check for trailing window suffix like " - 5h", "-5h", "_5h"
+	if window != "" {
+		lowerName := strings.ToLower(name)
+		lowerWin := strings.ToLower(window)
+		for _, sep := range []string{" - ", " -", "-", "_"} {
+			suffix := sep + lowerWin
+			if strings.HasSuffix(lowerName, suffix) {
+				name = strings.TrimSpace(name[:len(name)-len(suffix)])
+				break
+			}
+		}
+	}
+
+	if name == "" {
+		name = strings.TrimSpace(b.BucketID)
+		if name == "" {
+			name = "Default"
+		}
+	}
+
+	if window == "" {
+		window = "quota"
+	}
+
+	return name, strings.ToLower(window)
+}
+
+func padRight(s string, width int) string {
+	w := utf8.RuneCountInString(s)
+	if w >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-w)
+}
+
+func renderAccountsTable(w io.Writer, accounts []*domain.Account, allBuckets map[string][]*domain.QuotaBucket) {
+	accIDs := make(map[string]struct{}, len(accounts))
+	for _, acc := range accounts {
+		accIDs[acc.ID] = struct{}{}
+	}
+
+	canonicalFamilySet := make(map[string]struct{})
+	for accID, buckets := range allBuckets {
+		if _, ok := accIDs[accID]; !ok {
+			continue
+		}
+		for _, b := range buckets {
+			fam, _ := extractCanonicalFamilyAndWindow(b)
+			if fam != "" {
+				key := strings.ToUpper(strings.TrimSpace(fam))
+				canonicalFamilySet[key] = struct{}{}
+			}
+		}
+	}
+
+	families := make([]string, 0, len(canonicalFamilySet))
+	for f := range canonicalFamilySet {
+		families = append(families, f)
+	}
+	sort.Strings(families)
+
+	type tableRow struct {
+		id         string
+		email      string
+		status     string
+		active     string
+		familyCols map[string]string
+	}
+
+	rows := make([]tableRow, 0, len(accounts))
 
 	for _, acc := range accounts {
 		activeMark := ""
@@ -466,27 +592,134 @@ func runListAccounts(args []string) {
 			activeMark = "*"
 		}
 
-		dailyStr := "N/A"
-		weeklyStr := "N/A"
-
+		famBuckets := make(map[string][]*domain.QuotaBucket)
 		if buckets, ok := allBuckets[acc.ID]; ok {
 			for _, b := range buckets {
-				if b.Window == domain.QuotaWindowDaily {
-					dailyStr = fmt.Sprintf("%.0f%%", b.RemainingFraction*100)
-				} else if b.Window == domain.QuotaWindowWeekly {
-					weeklyStr = fmt.Sprintf("%.0f%%", b.RemainingFraction*100)
+				fam, _ := extractCanonicalFamilyAndWindow(b)
+				if fam != "" {
+					key := strings.ToUpper(strings.TrimSpace(fam))
+					famBuckets[key] = append(famBuckets[key], b)
 				}
 			}
 		}
 
-		fmt.Printf("%-36s  %-30s  %-10s  %-8s  %-12s  %-12s\n",
-			acc.ID,
-			acc.Email,
-			string(acc.Status),
-			activeMark,
-			dailyStr,
-			weeklyStr,
-		)
+		statusStr := string(acc.Status)
+		if acc.Status == domain.AccountStatusExhausted {
+			hasHealthyFamily := false
+			hasExhaustedFamily := false
+			for _, bList := range famBuckets {
+				if len(bList) == 0 {
+					continue
+				}
+				familyHealthy := true
+				for _, b := range bList {
+					if b.RemainingFraction <= 0.0 {
+						familyHealthy = false
+						break
+					}
+				}
+				if familyHealthy {
+					hasHealthyFamily = true
+				} else {
+					hasExhaustedFamily = true
+				}
+			}
+			if hasHealthyFamily && (hasExhaustedFamily || len(famBuckets) > 1) {
+				statusStr = "partial"
+			}
+		}
+
+		colVals := make(map[string]string, len(families))
+		for _, fam := range families {
+			bList := famBuckets[fam]
+			if len(bList) == 0 {
+				colVals[fam] = "N/A"
+				continue
+			}
+
+			winMap := make(map[string]*domain.QuotaBucket)
+			for _, b := range bList {
+				_, win := extractCanonicalFamilyAndWindow(b)
+				if existing, ok := winMap[win]; !ok || b.UpdatedAt.After(existing.UpdatedAt) {
+					winMap[win] = b
+				}
+			}
+
+			windows := make([]string, 0, len(winMap))
+			for win := range winMap {
+				windows = append(windows, win)
+			}
+			sort.Strings(windows)
+
+			parts := make([]string, 0, len(windows))
+			for _, win := range windows {
+				b := winMap[win]
+				pct := b.RemainingFraction * 100
+				parts = append(parts, fmt.Sprintf("%s: %.0f%%", win, pct))
+			}
+
+			if len(parts) == 0 {
+				colVals[fam] = "N/A"
+			} else {
+				colVals[fam] = strings.Join(parts, ", ")
+			}
+		}
+
+		rows = append(rows, tableRow{
+			id:         acc.ID,
+			email:      acc.Email,
+			status:     statusStr,
+			active:     activeMark,
+			familyCols: colVals,
+		})
+	}
+
+	emailWidth := 30
+	for _, r := range rows {
+		if w := utf8.RuneCountInString(r.email); w > emailWidth {
+			emailWidth = w
+		}
+	}
+
+	familyWidths := make(map[string]int, len(families))
+	for _, fam := range families {
+		w := utf8.RuneCountInString(fam)
+		for _, r := range rows {
+			if rw := utf8.RuneCountInString(r.familyCols[fam]); rw > w {
+				w = rw
+			}
+		}
+		familyWidths[fam] = w
+	}
+
+	headerParts := []string{
+		padRight("ID", 36),
+		padRight("EMAIL", emailWidth),
+		padRight("STATUS", 10),
+		padRight("ACTIVE", 8),
+	}
+	for _, fam := range families {
+		w := familyWidths[fam]
+		headerParts = append(headerParts, padRight(fam, w))
+	}
+	headerLine := strings.Join(headerParts, "  ")
+	separatorLine := strings.Repeat("-", utf8.RuneCountInString(headerLine))
+
+	fmt.Fprintln(w, headerLine)
+	fmt.Fprintln(w, separatorLine)
+
+	for _, r := range rows {
+		rowParts := []string{
+			padRight(r.id, 36),
+			padRight(r.email, emailWidth),
+			padRight(r.status, 10),
+			padRight(r.active, 8),
+		}
+		for _, fam := range families {
+			w := familyWidths[fam]
+			rowParts = append(rowParts, padRight(r.familyCols[fam], w))
+		}
+		fmt.Fprintln(w, strings.Join(rowParts, "  "))
 	}
 }
 
