@@ -50,6 +50,10 @@ func TestCLI_ConfigErrors_ExitCode1(t *testing.T) {
 		// Invalid upstream URL & quota interval
 		{"set upstream_url ftp scheme", []string{"set", "upstream_url", "ftp://cloudcode.google.com"}, 1, "Configuration validation failed: invalid upstream_url"},
 		{"set quota_interval invalid", []string{"set", "quota_interval", "invalid_dur"}, 1, "Configuration validation failed: invalid quota_interval"},
+		// Invalid max_body_mb
+		{"set max_body_mb zero", []string{"set", "max_body_mb", "0"}, 1, "Invalid max_body_mb value: 0"},
+		{"set max_body_mb negative", []string{"set", "max_body_mb", "-5"}, 1, "Invalid max_body_mb value: -5"},
+		{"set max_body_mb string", []string{"set", "max_body_mb", "fifty"}, 1, "Invalid max_body_mb value: fifty"},
 	}
 
 	for _, tc := range tests {
@@ -318,5 +322,26 @@ func TestCLI_SubcommandFlags_PortAndTargetURL_ValidationErrors(t *testing.T) {
 				t.Errorf("[%s] expected validation error for ftp scheme, got nil", sub)
 			}
 		})
+	}
+}
+
+// TestCLI_SubcommandFlags_MaxBodyMB_ValidationErrors tests that CLI flags
+// for --max-body-mb reject values <= 0 across serve, launch, and wrap.
+func TestCLI_SubcommandFlags_MaxBodyMB_ValidationErrors(t *testing.T) {
+	subcommands := []string{"serve", "launch", "wrap"}
+	for _, sub := range subcommands {
+		for _, invalidMB := range []string{"0", "-5", "-100"} {
+			t.Run(sub+"_invalid_max_body_mb_"+invalidMB, func(t *testing.T) {
+				fs := flag.NewFlagSet(sub, flag.ContinueOnError)
+				maxBodyMB := fs.Int("max-body-mb", config.DefaultMaxBodyMB, "")
+				args := []string{"--max-body-mb=" + invalidMB}
+				if err := fs.Parse(args); err != nil {
+					t.Fatalf("parse err: %v", err)
+				}
+				if *maxBodyMB > 0 {
+					t.Errorf("[%s] expected non-positive maxBodyMB, got %d", sub, *maxBodyMB)
+				}
+			})
+		}
 	}
 }

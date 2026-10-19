@@ -34,6 +34,7 @@ type Config struct {
 	ModelPrimary             string
 	ModelSecondary           string
 	FallbackSecondaryEnabled bool
+	MaxBodyMB                int
 	Stdin                    io.Reader
 	Stdout                   io.Writer
 	Stderr                   io.Writer
@@ -46,6 +47,11 @@ type Config struct {
 
 // Option configures Wrap behavior.
 type Option func(*Config)
+
+// WithMaxBodyMB sets the maximum request body buffer size in megabytes.
+func WithMaxBodyMB(mb int) Option {
+	return func(c *Config) { c.MaxBodyMB = mb }
+}
 
 // WithModelFallback configures the model fallback primary, secondary, and enabled flag.
 func WithModelFallback(primary, secondary string, enabled bool) Option {
@@ -222,6 +228,9 @@ func Wrap(ctx context.Context, cmdArgs []string, opts ...Option) (int, error) {
 			appCfg.ModelSecondary = cfg.ModelSecondary
 		}
 		appCfg.FallbackSecondaryEnabled = cfg.FallbackSecondaryEnabled
+		if cfg.MaxBodyMB > 0 {
+			appCfg.MaxBodyMB = cfg.MaxBodyMB
+		}
 
 		broadcaster = proxy.NewBroadcaster(100)
 		failoverEngine = proxy.NewFailoverEngine(
@@ -250,6 +259,7 @@ func Wrap(ctx context.Context, cmdArgs []string, opts ...Option) (int, error) {
 			proxy.WithEventRepository(eventRepo),
 			proxy.WithFailoverEngine(failoverEngine),
 			proxy.WithTokenRefresher(tokenRefresher),
+			proxy.WithMaxBodyBytes(appCfg.MaxBodyBytes()),
 		}
 		if cfg.TargetURL != "" {
 			proxyOpts = append(proxyOpts, proxy.WithTargetURL(cfg.TargetURL))

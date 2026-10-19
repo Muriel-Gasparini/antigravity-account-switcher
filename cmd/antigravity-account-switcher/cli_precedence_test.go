@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -486,6 +487,113 @@ func TestCLI_SubprocessBinaryExecution(t *testing.T) {
 			t.Errorf("expected environment variable to override config file: got %q, expected 'from-environment-var'", strings.TrimSpace(string(outGet)))
 		}
 	})
+
+	t.Run("Binary_MaxBodyMB_Config_Get_Set", func(t *testing.T) {
+		dir := t.TempDir()
+		env := []string{
+			"ANTIGRAVITY_CONFIG_DIR=" + dir,
+			"PATH=" + os.Getenv("PATH"),
+		}
+
+		// Initial default is 100
+		cmdGetInit := exec.Command(binPath, "config", "get", "max_body_mb")
+		cmdGetInit.Env = env
+		outInit, err := cmdGetInit.CombinedOutput()
+		if err != nil {
+			t.Fatalf("get failed: %v, out:\n%s", err, outInit)
+		}
+		if strings.TrimSpace(string(outInit)) != "100" {
+			t.Errorf("expected initial max_body_mb 100, got %q", strings.TrimSpace(string(outInit)))
+		}
+
+		// Set to 250
+		cmdSet := exec.Command(binPath, "config", "set", "max_body_mb", "250")
+		cmdSet.Env = env
+		if out, err := cmdSet.CombinedOutput(); err != nil {
+			t.Fatalf("set failed: %v, out:\n%s", err, out)
+		}
+
+		// Verify get returns 250
+		cmdGet := exec.Command(binPath, "config", "get", "max_body_mb")
+		cmdGet.Env = env
+		outGet, err := cmdGet.CombinedOutput()
+		if err != nil {
+			t.Fatalf("get failed: %v, out:\n%s", err, outGet)
+		}
+		if strings.TrimSpace(string(outGet)) != "250" {
+			t.Errorf("expected max_body_mb 250, got %q", strings.TrimSpace(string(outGet)))
+		}
+
+		// Env override
+		cmdGetEnv := exec.Command(binPath, "config", "get", "max_body_mb")
+		cmdGetEnv.Env = append(env, "ANTIGRAVITY_MAX_BODY_MB=350")
+		outEnv, err := cmdGetEnv.CombinedOutput()
+		if err != nil {
+			t.Fatalf("get failed: %v, out:\n%s", err, outEnv)
+		}
+		if strings.TrimSpace(string(outEnv)) != "350" {
+			t.Errorf("expected max_body_mb env override 350, got %q", strings.TrimSpace(string(outEnv)))
+		}
+	})
+
+	t.Run("Binary_RootFlag_Validation_And_Help", func(t *testing.T) {
+		// Non-positive values fail with exit code 1 and error message
+		for _, invalid := range []string{"0", "-5"} {
+			cmd := exec.Command(binPath, "--max-body-mb", invalid, "serve")
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Errorf("expected error for --max-body-mb %s, got success", invalid)
+			}
+			expectedErr := fmt.Sprintf("Configuration error: invalid max-body-mb %s: must be greater than 0", invalid)
+			if !strings.Contains(string(out), expectedErr) {
+				t.Errorf("expected output to contain %q, got:\n%s", expectedErr, string(out))
+			}
+		}
+
+		// Missing subcommand with root flag exits with code 1 and prints usage
+		cmdNoCmd := exec.Command(binPath, "--max-body-mb", "100")
+		outNoCmd, err := cmdNoCmd.CombinedOutput()
+		if err == nil {
+			t.Errorf("expected error when no subcommand provided with root flag")
+		}
+		if !strings.Contains(string(outNoCmd), "Usage:") {
+			t.Errorf("expected usage output, got:\n%s", string(outNoCmd))
+		}
+
+		// Help flags with root flag exit 0 and print usage
+		for _, hFlag := range []string{"-h", "--help"} {
+			cmdHelp := exec.Command(binPath, "--max-body-mb", "100", hFlag)
+			outHelp, err := cmdHelp.CombinedOutput()
+			if err != nil {
+				t.Errorf("expected exit 0 for %s, got: %v, out:\n%s", hFlag, err, string(outHelp))
+			}
+			if !strings.Contains(string(outHelp), "Usage:") {
+				t.Errorf("expected usage output for %s, got:\n%s", hFlag, string(outHelp))
+			}
+		}
+
+		// Version flags with root flag exit 0 and print version
+		for _, vFlag := range []string{"-v", "--version"} {
+			cmdV := exec.Command(binPath, "--max-body-mb", "100", vFlag)
+			outV, err := cmdV.CombinedOutput()
+			if err != nil {
+				t.Errorf("expected exit 0 for %s, got: %v, out:\n%s", vFlag, err, string(outV))
+			}
+			if !strings.Contains(string(outV), "antigravity-account-switcher v") {
+				t.Errorf("expected version output for %s, got:\n%s", vFlag, string(outV))
+			}
+		}
+
+		// Unknown flag prints single error and exits 1
+		cmdInvalid := exec.Command(binPath, "--invalid-flag", "serve")
+		outInvalid, err := cmdInvalid.CombinedOutput()
+		if err == nil {
+			t.Errorf("expected error for invalid flag")
+		}
+		if !strings.Contains(string(outInvalid), "flag provided but not defined: -invalid-flag") {
+			t.Errorf("expected flag error, got:\n%s", string(outInvalid))
+		}
+	})
 }
 
 // TestCLI_AdversarialEdgeCases tests edge cases, whitespace handling, and flag delimiters
@@ -616,6 +724,114 @@ func TestCLI_AdversarialEdgeCases(t *testing.T) {
 		}
 		if cfg.ModelSecondary != config.DefaultModelSecondary {
 			t.Errorf("empty model_secondary in json should be defensively defaulted, got %q", cfg.ModelSecondary)
+		}
+	})
+
+	t.Run("MaxBodyMB_Precedence_Matrix_4Tiers", func(t *testing.T) {
+		subcommands := []string{"serve", "launch", "wrap"}
+
+		for _, sub := range subcommands {
+			t.Run(sub+"_tier1_default", func(t *testing.T) {
+				emptyDir := t.TempDir()
+				t.Setenv("ANTIGRAVITY_CONFIG_DIR", emptyDir)
+				t.Setenv("ANTIGRAVITY_MAX_BODY_MB", "")
+
+				cfg, err := config.Load()
+				if err != nil {
+					t.Fatalf("Load() unexpected error: %v", err)
+				}
+				if cfg.MaxBodyMB != 100 {
+					t.Errorf("expected tier 1 default 100, got %d", cfg.MaxBodyMB)
+				}
+				if cfg.MaxBodyBytes() != 100*1024*1024 {
+					t.Errorf("expected 100MB in bytes, got %d", cfg.MaxBodyBytes())
+				}
+			})
+
+			t.Run(sub+"_tier2_config_json_overrides_default", func(t *testing.T) {
+				dir := t.TempDir()
+				t.Setenv("ANTIGRAVITY_CONFIG_DIR", dir)
+				t.Setenv("ANTIGRAVITY_MAX_BODY_MB", "")
+
+				cfgPath := filepath.Join(dir, "config.json")
+				data := []byte(`{"max_body_mb": 50}`)
+				if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
+					t.Fatalf("failed to write config: %v", err)
+				}
+
+				cfg, err := config.Load()
+				if err != nil {
+					t.Fatalf("Load() error: %v", err)
+				}
+				if cfg.MaxBodyMB != 50 {
+					t.Errorf("expected tier 2 config.json 50, got %d", cfg.MaxBodyMB)
+				}
+				if cfg.MaxBodyBytes() != 50*1024*1024 {
+					t.Errorf("expected 50MB in bytes, got %d", cfg.MaxBodyBytes())
+				}
+			})
+
+			t.Run(sub+"_tier3_env_var_overrides_config_json", func(t *testing.T) {
+				dir := t.TempDir()
+				t.Setenv("ANTIGRAVITY_CONFIG_DIR", dir)
+				cfgPath := filepath.Join(dir, "config.json")
+				data := []byte(`{"max_body_mb": 50}`)
+				if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
+					t.Fatalf("failed to write config: %v", err)
+				}
+
+				t.Setenv("ANTIGRAVITY_MAX_BODY_MB", "75")
+
+				cfg, err := config.Load()
+				if err != nil {
+					t.Fatalf("Load() error: %v", err)
+				}
+				if cfg.MaxBodyMB != 75 {
+					t.Errorf("expected tier 3 env 75, got %d", cfg.MaxBodyMB)
+				}
+				if cfg.MaxBodyBytes() != 75*1024*1024 {
+					t.Errorf("expected 75MB in bytes, got %d", cfg.MaxBodyBytes())
+				}
+			})
+
+			t.Run(sub+"_tier4_cli_flag_overrides_env_and_config", func(t *testing.T) {
+				dir := t.TempDir()
+				t.Setenv("ANTIGRAVITY_CONFIG_DIR", dir)
+				cfgPath := filepath.Join(dir, "config.json")
+				data := []byte(`{"max_body_mb": 50}`)
+				if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
+					t.Fatalf("failed to write config: %v", err)
+				}
+
+				t.Setenv("ANTIGRAVITY_MAX_BODY_MB", "75")
+
+				cfg, err := config.Load()
+				if err != nil {
+					t.Fatalf("Load() error: %v", err)
+				}
+
+				defaultMaxBodyMB := config.DefaultMaxBodyMB
+				if cfg.MaxBodyMB > 0 {
+					defaultMaxBodyMB = cfg.MaxBodyMB
+				}
+
+				fs := flag.NewFlagSet(sub, flag.ContinueOnError)
+				maxBodyMB := fs.Int("max-body-mb", defaultMaxBodyMB, "")
+
+				args := []string{"--max-body-mb=200"}
+				if err := fs.Parse(args); err != nil {
+					t.Fatalf("fs.Parse failed: %v", err)
+				}
+
+				cfg.MaxBodyMB = *maxBodyMB
+
+				if cfg.MaxBodyMB != 200 {
+					t.Errorf("[%s] expected tier 4 CLI flag 200, got %d", sub, cfg.MaxBodyMB)
+				}
+				if cfg.MaxBodyBytes() != 200*1024*1024 {
+					t.Errorf("[%s] expected 200MB in bytes, got %d", sub, cfg.MaxBodyBytes())
+				}
+			})
 		}
 	})
 }

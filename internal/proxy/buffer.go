@@ -7,8 +7,8 @@ import (
 	"net/http"
 )
 
-// DefaultMaxBodyBytes is the default maximum request body size (32MB).
-const DefaultMaxBodyBytes = 32 * 1024 * 1024
+// DefaultMaxBodyBytes is the default maximum request body size (100MB).
+const DefaultMaxBodyBytes = 100 * 1024 * 1024
 
 // ErrRequestBodyTooLarge is returned when the request body exceeds the configured maximum byte limit.
 var ErrRequestBodyTooLarge = errors.New("request body exceeds maximum allowed size")

@@ -41,6 +41,56 @@ func main() {
 	command := os.Args[1]
 	args := os.Args[2:]
 
+	// Support optional global/root flags before subcommand (e.g. --max-body-mb)
+	if strings.HasPrefix(command, "-") {
+		rootFs := flag.NewFlagSet("antigravity-account-switcher", flag.ContinueOnError)
+		rootFs.SetOutput(io.Discard)
+		rootMaxBodyMB := rootFs.Int("max-body-mb", 0, "Maximum request body buffer size in MB (default: 100)")
+		var showHelp, showVersion bool
+		rootFs.BoolVar(&showHelp, "help", false, "Show help")
+		rootFs.BoolVar(&showHelp, "h", false, "Show help")
+		rootFs.BoolVar(&showVersion, "version", false, "Show version")
+		rootFs.BoolVar(&showVersion, "v", false, "Show version")
+
+		err := rootFs.Parse(os.Args[1:])
+		if errors.Is(err, flag.ErrHelp) || showHelp {
+			printUsage()
+			return
+		}
+		if showVersion {
+			runVersion()
+			return
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n\n", err)
+			printUsage()
+			os.Exit(1)
+		}
+
+		maxBodyMBProvided := false
+		rootFs.Visit(func(f *flag.Flag) {
+			if f.Name == "max-body-mb" {
+				maxBodyMBProvided = true
+			}
+		})
+
+		if maxBodyMBProvided {
+			if *rootMaxBodyMB <= 0 {
+				fmt.Fprintf(os.Stderr, "Configuration error: invalid max-body-mb %d: must be greater than 0\n", *rootMaxBodyMB)
+				os.Exit(1)
+			}
+			_ = os.Setenv("ANTIGRAVITY_MAX_BODY_MB", strconv.Itoa(*rootMaxBodyMB))
+		}
+
+		remArgs := rootFs.Args()
+		if len(remArgs) == 0 {
+			printUsage()
+			os.Exit(1)
+		}
+		command = remArgs[0]
+		args = remArgs[1:]
+	}
+
 	switch command {
 	case "launch":
 		runLaunch(args)
@@ -76,7 +126,9 @@ func main() {
 func printUsage() {
 	fmt.Printf("antigravity-account-switcher v%s (%s)\n\n", Version, Commit)
 	fmt.Println("Usage:")
-	fmt.Println("  antigravity-account-switcher <command> [arguments]")
+	fmt.Println("  antigravity-account-switcher [flags] <command> [arguments]")
+	fmt.Println("\nGlobal Flags:")
+	fmt.Println("  --max-body-mb int  Maximum request body buffer size in MB (default: 100)")
 	fmt.Println("\nCommands:")
 	fmt.Println("  launch             Launch Google Antigravity 2.0 directly with coupled proxy supervisor")
 	fmt.Println("  serve              Start the local proxy, quota monitor, and web dashboard")
@@ -136,6 +188,10 @@ func runServe(args []string) {
 	if cfg.UpstreamURL != "" {
 		defaultTargetURL = cfg.UpstreamURL
 	}
+	defaultMaxBodyMB := config.DefaultMaxBodyMB
+	if cfg.MaxBodyMB > 0 {
+		defaultMaxBodyMB = cfg.MaxBodyMB
+	}
 
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	port := fs.Int("port", defaultPort, "Web dashboard and proxy port")
@@ -143,14 +199,21 @@ func runServe(args []string) {
 	dbPath := fs.String("db", defaultDBPath(), "Path to SQLite database file")
 	pollInterval := fs.Duration("poll-interval", defaultPollInterval, "Background quota polling interval")
 	targetURL := fs.String("target-url", defaultTargetURL, "Google Cloud Code PA upstream target")
+	maxBodyMB := fs.Int("max-body-mb", defaultMaxBodyMB, "Maximum request body buffer size in MB (default: 100)")
 	fallbackSecondary, modelPrimary, modelSecondary := addModelFlags(fs, cfg)
 	_ = fs.Parse(args)
+
+	if *maxBodyMB <= 0 {
+		fmt.Fprintf(os.Stderr, "Configuration error: invalid max-body-mb %d: must be greater than 0\n", *maxBodyMB)
+		os.Exit(1)
+	}
 
 	cfg.Port = *port
 	cfg.UpstreamURL = *targetURL
 	cfg.FallbackSecondaryEnabled = *fallbackSecondary
 	cfg.ModelPrimary = *modelPrimary
 	cfg.ModelSecondary = *modelSecondary
+	cfg.MaxBodyMB = *maxBodyMB
 
 	if err := cfg.Validate(); err != nil {
 		if strings.Contains(err.Error(), "cannot be identical") {
@@ -205,6 +268,7 @@ func runServe(args []string) {
 	proxyHandler, err := proxy.NewProxyHandler(
 		accRepo,
 		proxy.WithTargetURL(*targetURL),
+		proxy.WithMaxBodyBytes(cfg.MaxBodyBytes()),
 		proxy.WithMetricsRepository(metricsRepo),
 		proxy.WithEventBroadcaster(broadcaster),
 		proxy.WithEventRepository(eventRepo),
@@ -303,12 +367,17 @@ func runWrap(args []string) {
 	if cfg.UpstreamURL != "" {
 		defaultTargetURL = cfg.UpstreamURL
 	}
+	defaultMaxBodyMB := config.DefaultMaxBodyMB
+	if cfg.MaxBodyMB > 0 {
+		defaultMaxBodyMB = cfg.MaxBodyMB
+	}
 
 	fs := flag.NewFlagSet("wrap", flag.ExitOnError)
 	port := fs.Int("port", 0, "Switcher port (0 for random ephemeral port)")
 	dbPath := fs.String("db", defaultDBPath(), "Path to SQLite database file")
 	targetURL := fs.String("target-url", defaultTargetURL, "Google Cloud Code PA upstream target")
 	pollInterval := fs.Duration("poll-interval", defaultPollInterval, "Quota polling interval")
+	maxBodyMB := fs.Int("max-body-mb", defaultMaxBodyMB, "Maximum request body buffer size in MB (default: 100)")
 
 	fallbackSecondary, modelPrimary, modelSecondary := addModelFlags(fs, cfg)
 
@@ -337,6 +406,10 @@ func runWrap(args []string) {
 		fmt.Fprintf(os.Stderr, "Configuration error: invalid port %d: must be between 0 and 65535\n", *port)
 		os.Exit(1)
 	}
+	if *maxBodyMB <= 0 {
+		fmt.Fprintf(os.Stderr, "Configuration error: invalid max-body-mb %d: must be greater than 0\n", *maxBodyMB)
+		os.Exit(1)
+	}
 	if *port > 0 {
 		cfg.Port = *port
 	}
@@ -344,6 +417,7 @@ func runWrap(args []string) {
 	cfg.FallbackSecondaryEnabled = *fallbackSecondary
 	cfg.ModelPrimary = *modelPrimary
 	cfg.ModelSecondary = *modelSecondary
+	cfg.MaxBodyMB = *maxBodyMB
 
 	if err := cfg.Validate(); err != nil {
 		if strings.Contains(err.Error(), "cannot be identical") {
@@ -370,6 +444,7 @@ func runWrap(args []string) {
 		launcher.WithTargetURL(*targetURL),
 		launcher.WithPollInterval(*pollInterval),
 		launcher.WithModelFallback(cfg.ModelPrimary, cfg.ModelSecondary, cfg.FallbackSecondaryEnabled),
+		launcher.WithMaxBodyMB(cfg.MaxBodyMB),
 	)
 
 	if err != nil {
@@ -550,6 +625,11 @@ func runLaunch(args []string) {
 		}
 	}
 
+	defaultMaxBodyMB := config.DefaultMaxBodyMB
+	if cfg.MaxBodyMB > 0 {
+		defaultMaxBodyMB = cfg.MaxBodyMB
+	}
+
 	fs := flag.NewFlagSet("launch", flag.ExitOnError)
 	binFlag := fs.String("bin", "", "Path to Antigravity 2.0 binary (overrides auto-detection)")
 	port := fs.Int("port", cfg.Port, "Proxy and web dashboard port (defaults to configured port)")
@@ -558,6 +638,7 @@ func runLaunch(args []string) {
 	dbPath := fs.String("db", cfg.DBPath, "Path to SQLite database file")
 	targetURL := fs.String("target-url", cfg.UpstreamURL, "Google Cloud Code PA upstream target")
 	pollInterval := fs.Duration("poll-interval", defaultPollInterval, "Quota polling interval")
+	maxBodyMB := fs.Int("max-body-mb", defaultMaxBodyMB, "Maximum request body buffer size in MB (default: 100)")
 
 	fallbackSecondary, modelPrimary, modelSecondary := addModelFlags(fs, cfg)
 
@@ -580,11 +661,17 @@ func runLaunch(args []string) {
 		passthroughArgs = fs.Args()
 	}
 
+	if *maxBodyMB <= 0 {
+		fmt.Fprintf(os.Stderr, "Configuration error: invalid max-body-mb %d: must be greater than 0\n", *maxBodyMB)
+		os.Exit(1)
+	}
+
 	cfg.Port = *port
 	cfg.UpstreamURL = *targetURL
 	cfg.FallbackSecondaryEnabled = *fallbackSecondary
 	cfg.ModelPrimary = *modelPrimary
 	cfg.ModelSecondary = *modelSecondary
+	cfg.MaxBodyMB = *maxBodyMB
 
 	if err := cfg.Validate(); err != nil {
 		if strings.Contains(err.Error(), "cannot be identical") {
@@ -632,6 +719,7 @@ func runLaunch(args []string) {
 		launcher.WithTargetURL(*targetURL),
 		launcher.WithPollInterval(*pollInterval),
 		launcher.WithModelFallback(cfg.ModelPrimary, cfg.ModelSecondary, cfg.FallbackSecondaryEnabled),
+		launcher.WithMaxBodyMB(cfg.MaxBodyMB),
 	)
 
 	if err != nil {
@@ -672,6 +760,7 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  model_primary:              %s\n", cfg.ModelPrimary)
 		fmt.Fprintf(stdout, "  model_secondary:            %s\n", cfg.ModelSecondary)
 		fmt.Fprintf(stdout, "  fallback_secondary_enabled: %t\n", cfg.FallbackSecondaryEnabled)
+		fmt.Fprintf(stdout, "  max_body_mb:                %d\n", cfg.MaxBodyMB)
 		if cfg.ClientID != "" {
 			fmt.Fprintf(stdout, "  client_id:                  %s\n", cfg.ClientID)
 		}
@@ -715,6 +804,8 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, cfg.ModelSecondary)
 		case "fallback_secondary_enabled":
 			fmt.Fprintln(stdout, cfg.FallbackSecondaryEnabled)
+		case "max_body_mb":
+			fmt.Fprintln(stdout, cfg.MaxBodyMB)
 		case "client_id":
 			fmt.Fprintln(stdout, cfg.ClientID)
 		case "client_secret":
@@ -788,6 +879,13 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 				return 1
 			}
 			cfg.FallbackSecondaryEnabled = b
+		case "max_body_mb":
+			mb, err := strconv.Atoi(strings.TrimSpace(val))
+			if err != nil || mb <= 0 {
+				fmt.Fprintf(stderr, "Invalid max_body_mb value: %s\n", val)
+				return 1
+			}
+			cfg.MaxBodyMB = mb
 		case "client_id":
 			cfg.ClientID = strings.TrimSpace(val)
 		case "client_secret":

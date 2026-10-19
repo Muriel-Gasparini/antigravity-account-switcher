@@ -25,6 +25,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.FallbackSecondaryEnabled != DefaultFallbackSecondaryEnabled {
 		t.Errorf("expected fallback_secondary_enabled %t, got %t", DefaultFallbackSecondaryEnabled, cfg.FallbackSecondaryEnabled)
 	}
+	if cfg.MaxBodyMB != DefaultMaxBodyMB {
+		t.Errorf("expected max_body_mb %d, got %d", DefaultMaxBodyMB, cfg.MaxBodyMB)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("expected DefaultConfig to be valid, got: %v", err)
 	}
@@ -41,6 +44,9 @@ func TestConfig_ModelDefaults(t *testing.T) {
 	}
 	if DefaultFallbackSecondaryEnabled != false {
 		t.Errorf("expected DefaultFallbackSecondaryEnabled to be false, got %t", DefaultFallbackSecondaryEnabled)
+	}
+	if DefaultMaxBodyMB != 100 {
+		t.Errorf("expected DefaultMaxBodyMB to be 100, got %d", DefaultMaxBodyMB)
 	}
 }
 
@@ -102,6 +108,7 @@ func TestConfig_JSONSerialization_RoundTrip(t *testing.T) {
 		ModelPrimary:             "claude-3-5-sonnet",
 		ModelSecondary:           "claude-3-5-sonnet",
 		FallbackSecondaryEnabled: true,
+		MaxBodyMB:                150,
 	}
 
 	data, err := json.Marshal(orig)
@@ -119,6 +126,9 @@ func TestConfig_JSONSerialization_RoundTrip(t *testing.T) {
 	if !strings.Contains(rawJSON, `"fallback_secondary_enabled":true`) {
 		t.Errorf("expected json to contain fallback_secondary_enabled, got %s", rawJSON)
 	}
+	if !strings.Contains(rawJSON, `"max_body_mb":150`) {
+		t.Errorf("expected json to contain max_body_mb, got %s", rawJSON)
+	}
 
 	var parsed Config
 	if err := json.Unmarshal(data, &parsed); err != nil {
@@ -133,6 +143,9 @@ func TestConfig_JSONSerialization_RoundTrip(t *testing.T) {
 	}
 	if parsed.FallbackSecondaryEnabled != orig.FallbackSecondaryEnabled {
 		t.Errorf("expected FallbackSecondaryEnabled %t, got %t", orig.FallbackSecondaryEnabled, parsed.FallbackSecondaryEnabled)
+	}
+	if parsed.MaxBodyMB != orig.MaxBodyMB {
+		t.Errorf("expected MaxBodyMB %d, got %d", orig.MaxBodyMB, parsed.MaxBodyMB)
 	}
 }
 
@@ -168,9 +181,137 @@ func TestConfig_BackwardCompatibility_DefaultsPreserved(t *testing.T) {
 	if cfg.FallbackSecondaryEnabled != false {
 		t.Errorf("expected default fallback_secondary_enabled false, got %t", cfg.FallbackSecondaryEnabled)
 	}
+	if cfg.MaxBodyMB != DefaultMaxBodyMB {
+		t.Errorf("expected default max_body_mb %d, got %d", DefaultMaxBodyMB, cfg.MaxBodyMB)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("expected loaded legacy config to be valid, got: %v", err)
 	}
+}
+
+func TestConfig_MaxBodyMB_EnvOverride(t *testing.T) {
+	tests := []struct {
+		name        string
+		envVal      string
+		expectedMB  int
+		expectedCap int64
+	}{
+		{
+			name:        "valid positive override",
+			envVal:      "200",
+			expectedMB:  200,
+			expectedCap: 200 * 1024 * 1024,
+		},
+		{
+			name:        "override with spaces",
+			envVal:      "  50  ",
+			expectedMB:  50,
+			expectedCap: 50 * 1024 * 1024,
+		},
+		{
+			name:        "zero ignored retains default",
+			envVal:      "0",
+			expectedMB:  DefaultMaxBodyMB,
+			expectedCap: int64(DefaultMaxBodyMB) * 1024 * 1024,
+		},
+		{
+			name:        "negative ignored retains default",
+			envVal:      "-10",
+			expectedMB:  DefaultMaxBodyMB,
+			expectedCap: int64(DefaultMaxBodyMB) * 1024 * 1024,
+		},
+		{
+			name:        "non-numeric ignored retains default",
+			envVal:      "invalid_mb",
+			expectedMB:  DefaultMaxBodyMB,
+			expectedCap: int64(DefaultMaxBodyMB) * 1024 * 1024,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			t.Setenv("ANTIGRAVITY_CONFIG_DIR", tmpDir)
+			t.Setenv("ANTIGRAVITY_MAX_BODY_MB", tc.envVal)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() unexpected error: %v", err)
+			}
+			if cfg.MaxBodyMB != tc.expectedMB {
+				t.Errorf("expected MaxBodyMB %d, got %d", tc.expectedMB, cfg.MaxBodyMB)
+			}
+			if cfg.MaxBodyBytes() != tc.expectedCap {
+				t.Errorf("expected MaxBodyBytes() %d, got %d", tc.expectedCap, cfg.MaxBodyBytes())
+			}
+		})
+	}
+}
+
+func TestConfig_MaxBodyBytes(t *testing.T) {
+	t.Parallel()
+
+	t.Run("explicit positive value", func(t *testing.T) {
+		cfg := &Config{MaxBodyMB: 50}
+		expected := int64(50 * 1024 * 1024)
+		if got := cfg.MaxBodyBytes(); got != expected {
+			t.Errorf("expected %d, got %d", expected, got)
+		}
+	})
+
+	t.Run("zero falls back to DefaultMaxBodyMB", func(t *testing.T) {
+		cfg := &Config{MaxBodyMB: 0}
+		expected := int64(DefaultMaxBodyMB) * 1024 * 1024
+		if got := cfg.MaxBodyBytes(); got != expected {
+			t.Errorf("expected %d, got %d", expected, got)
+		}
+	})
+
+	t.Run("negative falls back to DefaultMaxBodyMB", func(t *testing.T) {
+		cfg := &Config{MaxBodyMB: -20}
+		expected := int64(DefaultMaxBodyMB) * 1024 * 1024
+		if got := cfg.MaxBodyBytes(); got != expected {
+			t.Errorf("expected %d, got %d", expected, got)
+		}
+	})
+
+	t.Run("nil receiver falls back to DefaultMaxBodyMB", func(t *testing.T) {
+		var cfg *Config
+		expected := int64(DefaultMaxBodyMB) * 1024 * 1024
+		if got := cfg.MaxBodyBytes(); got != expected {
+			t.Errorf("expected %d, got %d", expected, got)
+		}
+	})
+}
+
+func TestConfig_Validate_MaxBodyMB(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid positive passes", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.MaxBodyMB = 100
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected valid, got: %v", err)
+		}
+	})
+
+	t.Run("zero passes", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.MaxBodyMB = 0
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected valid, got: %v", err)
+		}
+	})
+
+	t.Run("negative fails", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.MaxBodyMB = -5
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("expected error for negative MaxBodyMB, got nil")
+		} else if !strings.Contains(err.Error(), "cannot be negative") {
+			t.Errorf("expected error mentioning 'cannot be negative', got: %v", err)
+		}
+	})
 }
 
 func TestConfig_EnvOverrides_Models(t *testing.T) {

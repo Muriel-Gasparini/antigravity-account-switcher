@@ -499,6 +499,48 @@ func TestProxyHandler_BufferedRequest_Limits(t *testing.T) {
 	}
 }
 
+func TestProxyHandler_DefaultCap_AboveOld32MBLimit(t *testing.T) {
+	mockGoogle := mocks.NewMockGoogleServer()
+	defer mockGoogle.Close()
+
+	_, accountRepo, _, _ := setupTestDB(t)
+
+	now := time.Now()
+	acc := &domain.Account{
+		ID:          "acc-large-payload",
+		Email:       "large@example.com",
+		AccessToken: "token-large",
+		IsActive:    true,
+		Status:      domain.AccountStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	_ = accountRepo.Create(context.Background(), acc)
+
+	// Default handler without WithMaxBodyBytes option (should have 100MB limit)
+	handler, err := NewProxyHandler(accountRepo, WithTargetURL(mockGoogle.URL))
+	if err != nil {
+		t.Fatalf("NewProxyHandler failed: %v", err)
+	}
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	client := &http.Client{}
+
+	// 33MB payload exceeds old 32MB limit, but is well within 100MB
+	payload33MB := bytes.Repeat([]byte("A"), 33*1024*1024)
+	req, _ := http.NewRequest("POST", proxyServer.URL+"/v1internal:streamGenerateContent", bytes.NewReader(payload33MB))
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for 33MB payload under 100MB cap, got %d", resp.StatusCode)
+	}
+}
+
 func TestProxyHandler_NoAccountsAtAll(t *testing.T) {
 	mockGoogle := mocks.NewMockGoogleServer()
 	defer mockGoogle.Close()
@@ -985,4 +1027,69 @@ func TestProxyHandler_ConnectTunneling(t *testing.T) {
 	if !bytes.Equal(replyBuf, testPayload) {
 		t.Fatalf("expected payload %q, got %q", string(testPayload), string(replyBuf))
 	}
+}
+
+func TestWithMaxBodyBytes_Fallback(t *testing.T) {
+	_, accountRepo, _, _ := setupTestDB(t)
+
+	t.Run("positive limit applied", func(t *testing.T) {
+		cfg := Config{}
+		WithMaxBodyBytes(50 * 1024 * 1024)(&cfg)
+		if cfg.MaxBodyBytes != 50*1024*1024 {
+			t.Errorf("expected 50MB, got %d", cfg.MaxBodyBytes)
+		}
+
+		h, err := NewProxyHandler(accountRepo, WithMaxBodyBytes(50*1024*1024))
+		if err != nil {
+			t.Fatalf("NewProxyHandler: %v", err)
+		}
+		if h.cfg.MaxBodyBytes != 50*1024*1024 {
+			t.Errorf("expected handler 50MB, got %d", h.cfg.MaxBodyBytes)
+		}
+	})
+
+	t.Run("zero falls back to DefaultMaxBodyBytes", func(t *testing.T) {
+		cfg := Config{}
+		WithMaxBodyBytes(0)(&cfg)
+		if cfg.MaxBodyBytes != DefaultMaxBodyBytes {
+			t.Errorf("expected DefaultMaxBodyBytes %d, got %d", DefaultMaxBodyBytes, cfg.MaxBodyBytes)
+		}
+
+		h, err := NewProxyHandler(accountRepo, WithMaxBodyBytes(0))
+		if err != nil {
+			t.Fatalf("NewProxyHandler: %v", err)
+		}
+		if h.cfg.MaxBodyBytes != DefaultMaxBodyBytes {
+			t.Errorf("expected handler DefaultMaxBodyBytes %d, got %d", DefaultMaxBodyBytes, h.cfg.MaxBodyBytes)
+		}
+	})
+
+	t.Run("negative falls back to DefaultMaxBodyBytes", func(t *testing.T) {
+		cfg := Config{}
+		WithMaxBodyBytes(-100)(&cfg)
+		if cfg.MaxBodyBytes != DefaultMaxBodyBytes {
+			t.Errorf("expected DefaultMaxBodyBytes %d, got %d", DefaultMaxBodyBytes, cfg.MaxBodyBytes)
+		}
+
+		h, err := NewProxyHandler(accountRepo, WithMaxBodyBytes(-50))
+		if err != nil {
+			t.Fatalf("NewProxyHandler: %v", err)
+		}
+		if h.cfg.MaxBodyBytes != DefaultMaxBodyBytes {
+			t.Errorf("expected handler DefaultMaxBodyBytes %d, got %d", DefaultMaxBodyBytes, h.cfg.MaxBodyBytes)
+		}
+	})
+
+	t.Run("default handler has 100MB cap", func(t *testing.T) {
+		h, err := NewProxyHandler(accountRepo)
+		if err != nil {
+			t.Fatalf("NewProxyHandler: %v", err)
+		}
+		if h.cfg.MaxBodyBytes != DefaultMaxBodyBytes {
+			t.Errorf("expected handler DefaultMaxBodyBytes %d, got %d", DefaultMaxBodyBytes, h.cfg.MaxBodyBytes)
+		}
+		if h.cfg.MaxBodyBytes != 100*1024*1024 {
+			t.Errorf("expected 100MB (%d), got %d", 100*1024*1024, h.cfg.MaxBodyBytes)
+		}
+	})
 }

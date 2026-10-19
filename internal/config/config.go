@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,6 +22,7 @@ const (
 	DefaultModelPrimary             = "gemini-2.5-pro"
 	DefaultModelSecondary           = "claude-3-5-sonnet"
 	DefaultFallbackSecondaryEnabled = false
+	DefaultMaxBodyMB                = 100
 )
 
 // Config holds persistent user configuration.
@@ -34,6 +36,7 @@ type Config struct {
 	ModelPrimary             string `json:"model_primary"`
 	ModelSecondary           string `json:"model_secondary"`
 	FallbackSecondaryEnabled bool   `json:"fallback_secondary_enabled"`
+	MaxBodyMB                int    `json:"max_body_mb,omitempty"`
 	ClientID                 string `json:"client_id,omitempty"`
 	ClientSecret             string `json:"client_secret,omitempty"`
 }
@@ -75,6 +78,7 @@ func DefaultConfig() *Config {
 		ModelPrimary:             DefaultModelPrimary,
 		ModelSecondary:           DefaultModelSecondary,
 		FallbackSecondaryEnabled: DefaultFallbackSecondaryEnabled,
+		MaxBodyMB:                DefaultMaxBodyMB,
 	}
 }
 
@@ -94,12 +98,15 @@ func LoadDiskConfig() (*Config, error) {
 		}
 	}
 
-	// Defensive defaults if unmarshaled JSON contained explicit empty strings
+	// Defensive defaults if unmarshaled JSON contained explicit empty strings or invalid limits
 	if cfg.ModelPrimary == "" {
 		cfg.ModelPrimary = DefaultModelPrimary
 	}
 	if cfg.ModelSecondary == "" {
 		cfg.ModelSecondary = DefaultModelSecondary
+	}
+	if cfg.MaxBodyMB <= 0 {
+		cfg.MaxBodyMB = DefaultMaxBodyMB
 	}
 
 	return cfg, nil
@@ -149,6 +156,11 @@ func Load() (*Config, error) {
 	if envClientSecret := os.Getenv("ANTIGRAVITY_CLIENT_SECRET"); envClientSecret != "" {
 		cfg.ClientSecret = strings.TrimSpace(envClientSecret)
 	}
+	if envMaxBody := os.Getenv("ANTIGRAVITY_MAX_BODY_MB"); envMaxBody != "" {
+		if mb, err := strconv.Atoi(strings.TrimSpace(envMaxBody)); err == nil && mb > 0 {
+			cfg.MaxBodyMB = mb
+		}
+	}
 
 	return cfg, nil
 }
@@ -189,10 +201,22 @@ func ParseBool(val string) (bool, error) {
 	}
 }
 
+// MaxBodyBytes returns the maximum request body buffer size in bytes.
+// If MaxBodyMB is <= 0 or the receiver is nil, it falls back to DefaultMaxBodyMB in bytes.
+func (c *Config) MaxBodyBytes() int64 {
+	if c == nil || c.MaxBodyMB <= 0 {
+		return int64(DefaultMaxBodyMB) * 1024 * 1024
+	}
+	return int64(c.MaxBodyMB) * 1024 * 1024
+}
+
 // Validate verifies configuration boundaries, network URLs, and model fallback invariants.
 func (c *Config) Validate() error {
 	if c.Port < 1 || c.Port > 65535 {
 		return fmt.Errorf("invalid port %d: must be between 1 and 65535", c.Port)
+	}
+	if c.MaxBodyMB < 0 {
+		return fmt.Errorf("invalid max_body_mb %d: cannot be negative", c.MaxBodyMB)
 	}
 	if c.UpstreamURL != "" {
 		parsed, err := url.Parse(c.UpstreamURL)

@@ -78,8 +78,15 @@ func WithMaxRetries(n int) Option {
 }
 
 // WithMaxBodyBytes configures the in-memory request buffering upper bound.
+// If b <= 0, it falls back to DefaultMaxBodyBytes.
 func WithMaxBodyBytes(b int64) Option {
-	return func(c *Config) { c.MaxBodyBytes = b }
+	return func(c *Config) {
+		if b <= 0 {
+			c.MaxBodyBytes = DefaultMaxBodyBytes
+		} else {
+			c.MaxBodyBytes = b
+		}
+	}
 }
 
 // WithHTTPClient provides a custom *http.Client for upstream communication.
@@ -193,6 +200,10 @@ func NewProxyHandler(accountRepo domain.AccountRepository, opts ...Option) (*Pro
 
 	for _, opt := range opts {
 		opt(&cfg)
+	}
+
+	if cfg.MaxBodyBytes <= 0 {
+		cfg.MaxBodyBytes = DefaultMaxBodyBytes
 	}
 
 	parsedURL, err := url.Parse(cfg.TargetURL)

@@ -128,6 +128,7 @@ func TestCLI_Config_Get(t *testing.T) {
 		{"model_primary", config.DefaultModelPrimary},
 		{"model_secondary", config.DefaultModelSecondary},
 		{"fallback_secondary_enabled", "false"},
+		{"max_body_mb", fmt.Sprintf("%d", config.DefaultMaxBodyMB)},
 		{"port", fmt.Sprintf("%d", config.DefaultPort)},
 		{"upstream_url", config.DefaultUpstreamURL},
 		{"quota_interval", config.DefaultInterval},
@@ -209,6 +210,21 @@ func TestCLI_Config_Set(t *testing.T) {
 			}
 		})
 	}
+
+	// 5. Set max_body_mb
+	outMaxBody := captureStdout(func() {
+		runConfig([]string{"set", "max_body_mb", "250"})
+	})
+	if !strings.Contains(outMaxBody, "Updated 'max_body_mb' to '250'") {
+		t.Errorf("expected max_body_mb confirmation, got: %s", outMaxBody)
+	}
+	loadedMaxBody, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load failed: %v", err)
+	}
+	if loadedMaxBody.MaxBodyMB != 250 {
+		t.Errorf("expected max_body_mb 250, got %d", loadedMaxBody.MaxBodyMB)
+	}
 }
 
 func TestCLI_Config_Errors(t *testing.T) {
@@ -263,6 +279,12 @@ func TestCLI_Config_Errors(t *testing.T) {
 			expectedSubstr: "Invalid port value: not_a_number",
 		},
 		{
+			name:           "set invalid max_body_mb value",
+			args:           []string{"set", "max_body_mb", "-1"},
+			expectedExit:   1,
+			expectedSubstr: "Invalid max_body_mb value: -1",
+		},
+		{
 			name:           "set empty model_primary",
 			args:           []string{"set", "model_primary", ""},
 			expectedExit:   1,
@@ -311,6 +333,9 @@ func TestCLI_ExecuteConfig_Direct(t *testing.T) {
 	if !strings.Contains(stdout.String(), "model_primary:") {
 		t.Errorf("expected stdout to contain model_primary, got %s", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "max_body_mb:") {
+		t.Errorf("expected stdout to contain max_body_mb, got %s", stdout.String())
+	}
 
 	// Test identical models validation failure
 	stdout.Reset()
@@ -338,12 +363,14 @@ func TestCLI_SubcommandFlags_ServeLaunchWrap(t *testing.T) {
 		t.Run(sub+"_flags", func(t *testing.T) {
 			fs := flag.NewFlagSet(sub, flag.ContinueOnError)
 			cfg := config.DefaultConfig()
+			maxBodyMB := fs.Int("max-body-mb", config.DefaultMaxBodyMB, "")
 			fallbackEnabled, modelPrimary, modelSecondary := addModelFlags(fs, cfg)
 
 			args := []string{
 				"--fallback-secondary=true",
 				"--model-primary=claude-3-7-sonnet",
 				"--model-secondary=gemini-2.5-pro",
+				"--max-body-mb=150",
 			}
 
 			if err := fs.Parse(args); err != nil {
@@ -358,6 +385,9 @@ func TestCLI_SubcommandFlags_ServeLaunchWrap(t *testing.T) {
 			}
 			if *modelSecondary != "gemini-2.5-pro" {
 				t.Errorf("expected modelSecondary to be gemini-2.5-pro, got: %s", *modelSecondary)
+			}
+			if *maxBodyMB != 150 {
+				t.Errorf("expected maxBodyMB to be 150, got: %d", *maxBodyMB)
 			}
 		})
 	}
