@@ -55,19 +55,27 @@ func ConfigFilePath() string {
 	return filepath.Join(ConfigDir(), ConfigFileName)
 }
 
-// DefaultDBPath returns the default SQLite database path.
+// DefaultDBPath returns the SQLite database path to use at runtime:
+// ANTIGRAVITY_DB_PATH when set, otherwise the built-in default location.
 func DefaultDBPath() string {
 	if env := os.Getenv("ANTIGRAVITY_DB_PATH"); env != "" {
 		return env
 	}
+	return builtinDBPath()
+}
+
+// builtinDBPath is the default database location, independent of the environment.
+func builtinDBPath() string {
 	return filepath.Join(ConfigDir(), DefaultDBFileName)
 }
 
 // DefaultConfig returns an initialized Config struct with sensible defaults.
+// Its db_path ignores ANTIGRAVITY_DB_PATH so that configs derived from it can
+// be saved without persisting the override; Load applies it at runtime.
 func DefaultConfig() *Config {
 	return &Config{
 		Port:                     DefaultPort,
-		DBPath:                   DefaultDBPath(),
+		DBPath:                   builtinDBPath(),
 		AntigravityBin:           "",
 		UpstreamURL:              DefaultUpstreamURL,
 		QuotaInterval:            DefaultInterval,
