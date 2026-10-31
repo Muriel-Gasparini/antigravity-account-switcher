@@ -490,8 +490,14 @@ func (a *APIHandler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleOAuthStart serves POST/GET /oauth/start.
+// HandleOAuthStart serves POST /oauth/start. Each call opens a new loopback
+// flow, so it is not available through GET or any other method.
 func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		writeErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed", nil)
+		return
+	}
 	if a.oauthEngine == nil {
 		writeErrorJSON(w, http.StatusNotImplemented, "OAuth2 engine not configured", nil)
 		return
