@@ -11,9 +11,9 @@ import (
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
 )
 
-// newRefreshServer answers every refresh_token grant with the given
+// newRotatingRefreshServer answers every refresh_token grant with the given
 // refresh_token value (empty means the field is omitted from the response).
-func newRefreshServer(t *testing.T, rotated string) *httptest.Server {
+func newRotatingRefreshServer(t *testing.T, rotated string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := TokenResponse{AccessToken: "fresh-access", ExpiresIn: 3600, RefreshToken: rotated}
@@ -25,7 +25,7 @@ func newRefreshServer(t *testing.T, rotated string) *httptest.Server {
 }
 
 func TestRefreshAccessToken_PersistsRotatedRefreshToken(t *testing.T) {
-	srv := newRefreshServer(t, "rotated-refresh")
+	srv := newRotatingRefreshServer(t, "rotated-refresh")
 	_, accRepo := setupTestStore(t)
 	svc := NewOAuthService(accRepo, WithTokenURL(srv.URL+"/token"))
 	ctx := context.Background()
@@ -59,7 +59,7 @@ func TestRefreshAccessToken_PersistsRotatedRefreshToken(t *testing.T) {
 }
 
 func TestRefreshAccessToken_EmptyRefreshTokenKeepsStored(t *testing.T) {
-	srv := newRefreshServer(t, "")
+	srv := newRotatingRefreshServer(t, "")
 	_, accRepo := setupTestStore(t)
 	svc := NewOAuthService(accRepo, WithTokenURL(srv.URL+"/token"))
 	ctx := context.Background()
@@ -86,7 +86,7 @@ func TestRefreshAccessToken_EmptyRefreshTokenKeepsStored(t *testing.T) {
 }
 
 func TestRefreshAccessToken_UnknownTokenStillReturnsAccess(t *testing.T) {
-	srv := newRefreshServer(t, "rotated-refresh")
+	srv := newRotatingRefreshServer(t, "rotated-refresh")
 	_, accRepo := setupTestStore(t)
 	svc := NewOAuthService(accRepo, WithTokenURL(srv.URL+"/token"))
 
