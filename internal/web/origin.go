@@ -68,6 +68,11 @@ func (s *Server) isOwnOrigin(r *http.Request, origin string) bool {
 	case "localhost", "127.0.0.1", "::1":
 		return true
 	}
+	// The configured bind host (e.g. 0.0.0.0, which the startup banner prints) is
+	// also our own origin even though the connection's local address differs.
+	if bind := strings.ToLower(strings.Trim(s.cfg.BindAddr, "[]")); bind != "" && host == bind {
+		return true
+	}
 	return localHost != "" && host == strings.ToLower(localHost)
 }
 
