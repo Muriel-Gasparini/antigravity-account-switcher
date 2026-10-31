@@ -30,11 +30,9 @@ func BuildDSN(dbPath string) string {
 
 // Open initializes a SQLite connection pool with WAL mode, busy timeout, and auto-migration.
 func Open(dbPath string) (*DB, error) {
-	if dbPath != ":memory:" && !strings.HasPrefix(dbPath, "file::memory:") {
-		if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				return nil, fmt.Errorf("failed to create db directory: %w", err)
-			}
+	if !isMemoryPath(dbPath) {
+		if err := prepareDBFile(dbPath); err != nil {
+			return nil, err
 		}
 	}
 
@@ -67,6 +65,42 @@ func Open(dbPath string) (*DB, error) {
 	}
 
 	return db, nil
+}
+
+// isMemoryPath reports whether dbPath names an in-memory database, which needs no file on disk.
+func isMemoryPath(dbPath string) bool {
+	if dbPath == "" || dbPath == ":memory:" || strings.HasPrefix(dbPath, "file::memory:") {
+		return true
+	}
+	return strings.HasPrefix(dbPath, "file:") && strings.Contains(dbPath, "mode=memory")
+}
+
+// prepareDBFile creates the parent directory (0700) and the database file (0600) when missing,
+// and tightens the mode of an existing file. The file holds OAuth tokens, so it must not depend
+// on the process umask. A pre-existing parent directory is left alone because it may be
+// user-supplied. SQLite gives -wal and -shm files the same mode as the main database file.
+func prepareDBFile(dbPath string) error {
+	if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("failed to create db directory: %w", err)
+		}
+	}
+
+	// Create the file before SQLite opens it so it never exists with the umask-derived mode.
+	f, err := os.OpenFile(dbPath, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to create db file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("failed to close db file: %w", err)
+	}
+
+	// Tighten databases created by earlier versions. On Windows Chmod only toggles the
+	// read-only bit, and 0600 keeps it clear, so this is harmless there.
+	if err := os.Chmod(dbPath, 0o600); err != nil {
+		return fmt.Errorf("failed to set db file permissions: %w", err)
+	}
+	return nil
 }
 
 // OpenDB is an adapter that returns the standard *sql.DB handle.
