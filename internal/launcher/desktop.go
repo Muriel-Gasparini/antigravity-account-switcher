@@ -55,8 +55,10 @@ func InstallDesktop(opts DesktopOptions) (*DesktopResult, error) {
 		antigravityBin = resolved
 	}
 
-	// Persist resolved Antigravity binary to config for future launches
-	if cfg, err := config.Load(); err == nil {
+	// Persist resolved Antigravity binary to config for future launches. Read
+	// the file as stored: config.Load layers ANTIGRAVITY_* environment
+	// overrides (including the OAuth client secret) that must not be written back.
+	if cfg, err := config.LoadDiskConfig(); err == nil {
 		cfg.AntigravityBin = antigravityBin
 		_ = config.Save(cfg)
 	}
