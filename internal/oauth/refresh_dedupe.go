@@ -27,6 +27,9 @@ type refreshGroup struct {
 // caller giving up does not fail the others. Each caller still returns as soon
 // as its own ctx is done.
 func (g *refreshGroup) do(ctx context.Context, key string, fn func(context.Context) (*TokenResponse, error)) (*TokenResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	g.mu.Lock()
 	if g.calls == nil {
 		g.calls = make(map[string]*refreshCall)
