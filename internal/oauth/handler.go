@@ -494,6 +494,7 @@ type OAuthService struct {
 	accountRepo domain.AccountRepository
 	stateStore  *StateStore
 	client      *http.Client
+	refreshes   refreshGroup
 }
 
 // NewOAuthService constructs a new OAuthService.
@@ -859,11 +860,19 @@ func (s *OAuthService) UpsertAccount(ctx context.Context, email, accessToken, re
 }
 
 // RefreshToken exchanges a refresh token for fresh access credentials with Google.
+// Concurrent calls with the same refresh token share a single upstream request, so
+// parallel proxy requests and quota polls for one account do not refresh it
+// repeatedly (which could invalidate each other when refresh tokens rotate).
 func (s *OAuthService) RefreshToken(ctx context.Context, refreshToken string) (*TokenResponse, error) {
 	if refreshToken == "" {
 		return nil, errors.New("empty refresh token")
 	}
+	return s.refreshes.do(ctx, refreshToken, func(ctx context.Context) (*TokenResponse, error) {
+		return s.exchangeRefreshToken(ctx, refreshToken)
+	})
+}
 
+func (s *OAuthService) exchangeRefreshToken(ctx context.Context, refreshToken string) (*TokenResponse, error) {
 	if s.cfg.ClientID == "" || s.cfg.ClientSecret == "" {
 		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
 	}
