@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -731,6 +733,12 @@ func (m *mockFallbackSetter) SetFallbackConfig(p, s string, e bool) {
 	m.calls++
 }
 
+func (m *mockFallbackSetter) callCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
 func TestServer_ConfigAPI(t *testing.T) {
 	_, accRepo, quotaRepo, _, metricsSvc, broadcaster, eventRepo := setupTestWeb(t)
 
@@ -901,5 +909,190 @@ func TestServer_ModelsAPI(t *testing.T) {
 	defer respPost.Body.Close()
 	if respPost.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405 Method Not Allowed for POST /api/models, got %d", respPost.StatusCode)
+	}
+}
+
+// newConfigTestServer starts a web server whose live config is liveCfg and
+// returns it with the recording fallback setter. The config directory is the
+// per-test temp dir created by setupTestWeb.
+func newConfigTestServer(t *testing.T, liveCfg *config.Config) (*httptest.Server, *mockFallbackSetter) {
+	t.Helper()
+	_, accRepo, quotaRepo, _, metricsSvc, broadcaster, eventRepo := setupTestWeb(t)
+	setter := &mockFallbackSetter{}
+	server, err := NewServer(
+		accRepo, quotaRepo, metricsSvc, broadcaster, eventRepo, nil,
+		WithConfig(liveCfg),
+		WithFallbackConfigSetter(setter),
+	)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+	ts := httptest.NewServer(server)
+	t.Cleanup(ts.Close)
+	return ts, setter
+}
+
+func postConfig(t *testing.T, ts *httptest.Server, payload string) int {
+	t.Helper()
+	resp, err := http.Post(ts.URL+"/api/config", "application/json", strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("POST /api/config failed: %v", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+func getConfigResponse(t *testing.T, ts *httptest.Server) ConfigResponse {
+	t.Helper()
+	resp, err := http.Get(ts.URL + "/api/config")
+	if err != nil {
+		t.Fatalf("GET /api/config failed: %v", err)
+	}
+	defer resp.Body.Close()
+	var cfgResp ConfigResponse
+	if err := json.NewDecoder(resp.Body).Decode(&cfgResp); err != nil {
+		t.Fatalf("failed to decode GET /api/config: %v", err)
+	}
+	return cfgResp
+}
+
+func assertConfigResponse(t *testing.T, got, want ConfigResponse) {
+	t.Helper()
+	if got != want {
+		t.Errorf("config response = %+v, want %+v", got, want)
+	}
+}
+
+func TestServer_ConfigAPI_InvalidUpdateLeavesLiveConfigUntouched(t *testing.T) {
+	original := ConfigResponse{ModelPrimary: "gemini-2.5-pro", ModelSecondary: "gemini-2.5-flash", FallbackSecondaryEnabled: false}
+	ts, setter := newConfigTestServer(t, &config.Config{
+		Port:           8080,
+		ModelPrimary:   original.ModelPrimary,
+		ModelSecondary: original.ModelSecondary,
+	})
+
+	status := postConfig(t, ts, `{"model_secondary":"gemini-2.5-pro","fallback_secondary_enabled":true}`)
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected 400 for identical primary/secondary, got %d", status)
+	}
+
+	assertConfigResponse(t, getConfigResponse(t, ts), original)
+	if setter.callCount() != 0 {
+		t.Errorf("fallback setter must not be called on a rejected update, got %d calls", setter.callCount())
+	}
+	if _, err := os.Stat(config.ConfigFilePath()); !os.IsNotExist(err) {
+		t.Errorf("config file must not be written on a rejected update, stat err = %v", err)
+	}
+}
+
+func TestServer_ConfigAPI_SaveDoesNotPersistRuntimeOverrides(t *testing.T) {
+	// The live config carries values that came from flags or environment
+	// variables. Only the three fields this endpoint edits may reach disk.
+	live := &config.Config{
+		Port:           9999,
+		UpstreamURL:    "http://override.invalid",
+		ClientSecret:   "secret-from-env",
+		ModelPrimary:   "gemini-2.5-pro",
+		ModelSecondary: "gemini-2.5-flash",
+	}
+	ts, _ := newConfigTestServer(t, live)
+
+	onDisk := config.DefaultConfig()
+	onDisk.Port = 7001
+	onDisk.UpstreamURL = "https://disk.example.com"
+	onDisk.QuotaInterval = "10m"
+	onDisk.ModelPrimary = "gemini-2.5-pro"
+	onDisk.ModelSecondary = "gemini-2.5-flash"
+	if err := config.Save(onDisk); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	if status := postConfig(t, ts, `{"model_primary":"gemini-3.8-flash-high"}`); status != http.StatusOK {
+		t.Fatalf("expected 200, got %d", status)
+	}
+
+	saved, err := config.LoadDiskConfig()
+	if err != nil {
+		t.Fatalf("LoadDiskConfig: %v", err)
+	}
+	if saved.ModelPrimary != "gemini-3.8-flash-high" {
+		t.Errorf("model_primary on disk = %q, want the edited value", saved.ModelPrimary)
+	}
+	if saved.Port != 7001 {
+		t.Errorf("port on disk = %d, want 7001 (runtime override 9999 leaked)", saved.Port)
+	}
+	if saved.UpstreamURL != "https://disk.example.com" {
+		t.Errorf("upstream_url on disk = %q, runtime override leaked", saved.UpstreamURL)
+	}
+	if saved.QuotaInterval != "10m" {
+		t.Errorf("quota_interval on disk = %q, want 10m", saved.QuotaInterval)
+	}
+	if saved.ClientSecret != "" {
+		t.Errorf("client_secret from the environment was written to disk")
+	}
+
+	// The running config keeps its overrides and picks up the edit.
+	if live.Port != 9999 || live.ClientSecret != "secret-from-env" {
+		t.Errorf("live config lost its overrides: %+v", live)
+	}
+	if live.ModelPrimary != "gemini-3.8-flash-high" {
+		t.Errorf("live model_primary = %q, want the edited value", live.ModelPrimary)
+	}
+}
+
+func TestServer_ConfigAPI_SaveFailureReturns500AndKeepsLiveConfig(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("cannot make the config directory unwritable on this platform or as root")
+	}
+
+	original := ConfigResponse{ModelPrimary: "gemini-2.5-pro", ModelSecondary: "gemini-2.5-flash", FallbackSecondaryEnabled: false}
+	ts, setter := newConfigTestServer(t, &config.Config{
+		Port:           8080,
+		ModelPrimary:   original.ModelPrimary,
+		ModelSecondary: original.ModelSecondary,
+	})
+
+	dir := config.ConfigDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod config dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	status := postConfig(t, ts, `{"model_primary":"gemini-3.8-flash-high"}`)
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when the config cannot be saved, got %d", status)
+	}
+
+	assertConfigResponse(t, getConfigResponse(t, ts), original)
+	if setter.callCount() != 0 {
+		t.Errorf("fallback setter must not be called when saving fails, got %d calls", setter.callCount())
+	}
+}
+
+func TestServer_ConfigAPI_UnreadableDiskConfigReturns500(t *testing.T) {
+	original := ConfigResponse{ModelPrimary: "gemini-2.5-pro", ModelSecondary: "gemini-2.5-flash", FallbackSecondaryEnabled: false}
+	ts, setter := newConfigTestServer(t, &config.Config{
+		Port:           8080,
+		ModelPrimary:   original.ModelPrimary,
+		ModelSecondary: original.ModelSecondary,
+	})
+
+	corrupt := []byte("{ not json")
+	if err := os.WriteFile(config.ConfigFilePath(), corrupt, 0o600); err != nil {
+		t.Fatalf("write corrupt config: %v", err)
+	}
+
+	status := postConfig(t, ts, `{"model_primary":"gemini-3.8-flash-high"}`)
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when the on-disk config cannot be parsed, got %d", status)
+	}
+
+	assertConfigResponse(t, getConfigResponse(t, ts), original)
+	if setter.callCount() != 0 {
+		t.Errorf("fallback setter must not be called, got %d calls", setter.callCount())
+	}
+	if data, _ := os.ReadFile(config.ConfigFilePath()); string(data) != string(corrupt) {
+		t.Errorf("unparseable config file was overwritten: %q", data)
 	}
 }

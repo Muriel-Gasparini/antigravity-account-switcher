@@ -638,6 +638,24 @@ func (a *APIHandler) getConfig(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// applyConfigUpdate copies the fields present in req onto cfg. Blank model
+// names are ignored. Applying the same request twice gives the same result.
+func applyConfigUpdate(cfg *config.Config, req *ConfigUpdateRequest) {
+	if req.ModelPrimary != nil {
+		if trimmed := strings.TrimSpace(*req.ModelPrimary); trimmed != "" {
+			cfg.ModelPrimary = trimmed
+		}
+	}
+	if req.ModelSecondary != nil {
+		if trimmed := strings.TrimSpace(*req.ModelSecondary); trimmed != "" {
+			cfg.ModelSecondary = trimmed
+		}
+	}
+	if req.FallbackSecondaryEnabled != nil {
+		cfg.FallbackSecondaryEnabled = *req.FallbackSecondaryEnabled
+	}
+}
+
 func (a *APIHandler) updateConfig(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 65536)
 	var req ConfigUpdateRequest
@@ -647,55 +665,50 @@ func (a *APIHandler) updateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.cfgMu.Lock()
-	var currentCfg *config.Config
-	if a.appConfig != nil {
-		currentCfg = a.appConfig
-	} else {
+	liveCfg := a.appConfig
+	if liveCfg == nil {
 		loaded, err := config.Load()
 		if err != nil || loaded == nil {
 			loaded = config.DefaultConfig()
 		}
-		currentCfg = loaded
-		a.appConfig = loaded
+		liveCfg = loaded
 	}
 
-	if req.ModelPrimary != nil {
-		if trimmed := strings.TrimSpace(*req.ModelPrimary); trimmed != "" {
-			currentCfg.ModelPrimary = trimmed
-		}
-	}
-	if req.ModelSecondary != nil {
-		if trimmed := strings.TrimSpace(*req.ModelSecondary); trimmed != "" {
-			currentCfg.ModelSecondary = trimmed
-		}
-	}
-	if req.FallbackSecondaryEnabled != nil {
-		currentCfg.FallbackSecondaryEnabled = *req.FallbackSecondaryEnabled
-	}
-
-	if err := currentCfg.Validate(); err != nil {
+	// Validate the edit on a copy of the running config so a rejected request
+	// leaves the live config untouched.
+	candidate := *liveCfg
+	applyConfigUpdate(&candidate, &req)
+	if err := candidate.Validate(); err != nil {
 		a.cfgMu.Unlock()
 		writeErrorJSON(w, http.StatusBadRequest, "invalid configuration", err)
 		return
 	}
 
-	// Preserve existing non-model fields from disk config
-	if diskCfg, err := config.Load(); err == nil && diskCfg != nil {
-		if currentCfg.AntigravityBin == "" && diskCfg.AntigravityBin != "" {
-			currentCfg.AntigravityBin = diskCfg.AntigravityBin
-		}
-		if currentCfg.DBPath == "" && diskCfg.DBPath != "" {
-			currentCfg.DBPath = diskCfg.DBPath
-		}
-		if currentCfg.UpstreamURL == "" && diskCfg.UpstreamURL != "" {
-			currentCfg.UpstreamURL = diskCfg.UpstreamURL
-		}
-		if currentCfg.QuotaInterval == "" && diskCfg.QuotaInterval != "" {
-			currentCfg.QuotaInterval = diskCfg.QuotaInterval
-		}
+	// Persist onto the on-disk config rather than the running one: the running
+	// config carries flag and environment overrides (port, upstream URL, client
+	// secret, ...) that must not be written into config.json.
+	diskCfg, err := config.LoadDiskConfig()
+	if err != nil {
+		a.cfgMu.Unlock()
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to load saved configuration", err)
+		return
+	}
+	applyConfigUpdate(diskCfg, &req)
+	if err := diskCfg.Validate(); err != nil {
+		a.cfgMu.Unlock()
+		writeErrorJSON(w, http.StatusBadRequest, "invalid configuration", err)
+		return
+	}
+	if err := config.Save(diskCfg); err != nil {
+		a.cfgMu.Unlock()
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to save configuration", err)
+		return
 	}
 
-	_ = config.Save(currentCfg)
+	// The edit is valid and persisted; now apply it to the live config.
+	applyConfigUpdate(liveCfg, &req)
+	a.appConfig = liveCfg
+	currentCfg := liveCfg
 
 	if a.fallbackConfigSetter != nil {
 		a.fallbackConfigSetter.SetFallbackConfig(
