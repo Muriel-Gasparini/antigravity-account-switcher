@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,5 +57,72 @@ func TestInstallDesktop(t *testing.T) {
 	}
 	if _, err := os.Stat(res.DesktopFilePath); !os.IsNotExist(err) {
 		t.Errorf("expected desktop file to be removed, but still exists")
+	}
+}
+
+// closeFailWriter accepts writes but fails on Close, the way a full disk or an
+// NFS mount can only report a failed flush when the file is closed.
+type closeFailWriter struct {
+	buf      strings.Builder
+	writeErr error
+	closeErr error
+	closed   bool
+}
+
+func (w *closeFailWriter) Write(p []byte) (int, error) {
+	if w.writeErr != nil {
+		return 0, w.writeErr
+	}
+	return w.buf.Write(p)
+}
+
+func (w *closeFailWriter) Close() error {
+	w.closed = true
+	return w.closeErr
+}
+
+func TestCopyAndClose_ReportsCloseError(t *testing.T) {
+	closeErr := errors.New("close: no space left on device")
+	w := &closeFailWriter{closeErr: closeErr}
+
+	err := copyAndClose(w, strings.NewReader("icon-bytes"))
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("copyAndClose error = %v, want the Close error", err)
+	}
+	if got := w.buf.String(); got != "icon-bytes" {
+		t.Errorf("copied %q, want %q", got, "icon-bytes")
+	}
+}
+
+func TestCopyAndClose_WriteErrorWinsAndStillCloses(t *testing.T) {
+	writeErr := errors.New("write failed")
+	w := &closeFailWriter{writeErr: writeErr, closeErr: errors.New("close failed")}
+
+	err := copyAndClose(w, strings.NewReader("icon-bytes"))
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("copyAndClose error = %v, want the write error", err)
+	}
+	if !w.closed {
+		t.Error("writer was not closed after a failed write")
+	}
+}
+
+func TestCopyFile_CopiesContents(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.png")
+	dst := filepath.Join(dir, "dst.png")
+	if err := os.WriteFile(src, []byte("fake-png-data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyFile(src, dst); err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "fake-png-data" {
+		t.Errorf("dst = %q, want %q", got, "fake-png-data")
 	}
 }
