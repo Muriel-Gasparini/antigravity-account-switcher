@@ -925,6 +925,35 @@ func (s *OAuthService) exchangeRefreshToken(ctx context.Context, refreshToken st
 	return &tokenResp, nil
 }
 
+// RefreshAccessToken refreshes the access token for the given refresh token and
+// returns it with its absolute expiry. If the server rotates the refresh token,
+// the new one is stored on the account that held the old one.
+func (s *OAuthService) RefreshAccessToken(ctx context.Context, refreshToken string) (string, time.Time, error) {
+	resp, err := s.RefreshToken(ctx, refreshToken)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if resp.RefreshToken != "" && resp.RefreshToken != refreshToken {
+		s.storeRotatedRefreshToken(ctx, refreshToken, resp.RefreshToken)
+	}
+	return resp.AccessToken, time.Now().UTC().Add(time.Duration(resp.ExpiresIn) * time.Second), nil
+}
+
+// storeRotatedRefreshToken replaces oldToken with newToken on every account
+// that still holds oldToken. It is best effort: a failed write must not throw
+// away the access token that was just obtained.
+func (s *OAuthService) storeRotatedRefreshToken(ctx context.Context, oldToken, newToken string) {
+	accounts, err := s.accountRepo.List(ctx)
+	if err != nil {
+		return
+	}
+	for _, acc := range accounts {
+		if acc.RefreshToken == oldToken {
+			_ = s.accountRepo.UpdateRefreshToken(ctx, acc.ID, newToken)
+		}
+	}
+}
+
 // EnsureValidToken checks if an account's token is valid. If expiring, refreshes it and updates SQLite.
 func (s *OAuthService) EnsureValidToken(ctx context.Context, acc *domain.Account, safetyMargin time.Duration) (*domain.Account, error) {
 	if acc == nil {
