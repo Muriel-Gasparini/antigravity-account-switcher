@@ -130,6 +130,12 @@ func NewPoller(
 		opt(&cfg)
 	}
 
+	// time.NewTicker panics on non-positive durations, so a zero or negative
+	// interval (e.g. quota_interval "0s") must never reach the polling loop.
+	if cfg.PollInterval <= 0 {
+		cfg.PollInterval = DefaultPollInterval
+	}
+
 	client := cfg.HTTPClient
 	if client == nil {
 		client = &http.Client{
