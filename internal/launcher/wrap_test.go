@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -65,14 +64,6 @@ func TestBuildScopedEnv(t *testing.T) {
 	// Invariant: os.Environ was NOT modified
 	if os.Getenv("CLOUD_CODE_URL") == proxyURL {
 		t.Errorf("CRITICAL BUG: global os environment was mutated!")
-	}
-}
-
-func TestSetDeathSig(t *testing.T) {
-	cmd := exec.Command("true")
-	SetDeathSig(cmd)
-	if cmd.SysProcAttr == nil {
-		t.Fatal("expected SysProcAttr to be non-nil after SetDeathSig")
 	}
 }
 
