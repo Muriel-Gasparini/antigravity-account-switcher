@@ -38,6 +38,9 @@ func TestCLI_ConfigErrors_ExitCode1(t *testing.T) {
 		{"set port with suffix", []string{"set", "port", "8080abc"}, 1, "Invalid port value: 8080abc"},
 		{"set port too high", []string{"set", "port", "65536"}, 1, "Configuration validation failed: invalid port 65536"},
 		{"set port way too high", []string{"set", "port", "999999"}, 1, "Configuration validation failed: invalid port 999999"},
+		// Non-positive quota intervals
+		{"set quota_interval zero", []string{"set", "quota_interval", "0s"}, 1, "Configuration validation failed: invalid quota_interval"},
+		{"set quota_interval negative", []string{"set", "quota_interval", "-1m"}, 1, "Configuration validation failed: invalid quota_interval"},
 		// Invalid booleans
 		{"set open_browser invalid", []string{"set", "open_browser", "notabool"}, 1, "Invalid boolean value for open_browser: notabool"},
 		{"set fallback_secondary_enabled invalid", []string{"set", "fallback_secondary_enabled", "maybe"}, 1, "Invalid boolean value for fallback_secondary_enabled: maybe"},

@@ -212,8 +212,12 @@ func (c *Config) Validate() error {
 		}
 	}
 	if c.QuotaInterval != "" {
-		if _, err := time.ParseDuration(c.QuotaInterval); err != nil {
+		d, err := time.ParseDuration(c.QuotaInterval)
+		if err != nil {
 			return fmt.Errorf("invalid quota_interval %q: %w", c.QuotaInterval, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("invalid quota_interval %q: must be greater than zero", c.QuotaInterval)
 		}
 	}
 	if c.FallbackSecondaryEnabled {

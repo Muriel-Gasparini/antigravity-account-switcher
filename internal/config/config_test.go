@@ -501,6 +501,44 @@ func TestConfig_Validate(t *testing.T) {
 			expectErr: false,
 		},
 		{
+			name: "zero quota interval",
+			modify: func(c *Config) {
+				c.QuotaInterval = "0s"
+			},
+			expectErr: true,
+			errSubstr: "invalid quota_interval",
+		},
+		{
+			name: "bare zero quota interval",
+			modify: func(c *Config) {
+				c.QuotaInterval = "0"
+			},
+			expectErr: true,
+			errSubstr: "must be greater than zero",
+		},
+		{
+			name: "negative quota interval",
+			modify: func(c *Config) {
+				c.QuotaInterval = "-5m"
+			},
+			expectErr: true,
+			errSubstr: "must be greater than zero",
+		},
+		{
+			name: "empty quota interval means default",
+			modify: func(c *Config) {
+				c.QuotaInterval = ""
+			},
+			expectErr: false,
+		},
+		{
+			name: "small positive quota interval",
+			modify: func(c *Config) {
+				c.QuotaInterval = "1ms"
+			},
+			expectErr: false,
+		},
+		{
 			name: "invalid upstream URL scheme",
 			modify: func(c *Config) {
 				c.UpstreamURL = "ftp://invalid-scheme.com"
