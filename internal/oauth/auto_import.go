@@ -68,8 +68,11 @@ func AutoImportExistingAccount(ctx context.Context, repo domain.AccountRepositor
 	}
 
 	var acp ACPTokenFile
-	if err := json.Unmarshal(data, &acp); err != nil || acp.RefreshToken == "" {
+	if err := json.Unmarshal(data, &acp); err != nil {
 		return nil, fmt.Errorf("invalid token file format: %w", err)
+	}
+	if acp.RefreshToken == "" {
+		return nil, fmt.Errorf("invalid token file format: %s has no refresh_token", tokenPath)
 	}
 
 	// Exchange refresh token for fresh access token
