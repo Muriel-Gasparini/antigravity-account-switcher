@@ -58,6 +58,9 @@ func (g *refreshGroup) do(ctx context.Context, key string, fn func(context.Conte
 		if c.err != nil {
 			return nil, c.err
 		}
+		if c.resp == nil {
+			return nil, nil
+		}
 		resp := *c.resp
 		return &resp, nil
 	case <-ctx.Done():
