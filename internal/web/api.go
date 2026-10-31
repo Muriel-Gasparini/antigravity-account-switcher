@@ -395,7 +395,14 @@ func (a *APIHandler) HandleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 		summary, err := a.metricsService.GetSummary(ctx, accountID, norm)
 		if err != nil {
-			writeErrorJSON(w, http.StatusInternalServerError, "failed to get account summary", err)
+			switch {
+			case errors.Is(err, domain.ErrInvalidPeriod):
+				writeErrorJSON(w, http.StatusBadRequest, "invalid period; valid values: day, week, month, lifetime", err)
+			case errors.Is(err, domain.ErrAccountNotFound):
+				writeErrorJSON(w, http.StatusNotFound, "account not found", err)
+			default:
+				writeErrorJSON(w, http.StatusInternalServerError, "failed to get account summary", err)
+			}
 			return
 		}
 		writeJSON(w, http.StatusOK, summary)
