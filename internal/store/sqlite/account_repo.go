@@ -38,7 +38,7 @@ func (r *AccountRepository) Create(ctx context.Context, acc *domain.Account) err
 		acc.Status = domain.AccountStatusActive
 	}
 
-	expiryStr := acc.TokenExpiry.Format(time.RFC3339)
+	expiryStr := acc.TokenExpiry.UTC().Format(time.RFC3339)
 	if acc.TokenExpiry.IsZero() {
 		expiryStr = "1970-01-01T00:00:00Z"
 	}
@@ -57,8 +57,8 @@ func (r *AccountRepository) Create(ctx context.Context, acc *domain.Account) err
 		expiryStr,
 		acc.IsActive,
 		string(acc.Status),
-		acc.CreatedAt.Format(time.RFC3339),
-		acc.UpdatedAt.Format(time.RFC3339),
+		acc.CreatedAt.UTC().Format(time.RFC3339),
+		acc.UpdatedAt.UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "accounts.email") && strings.Contains(err.Error(), "UNIQUE") {
@@ -187,7 +187,7 @@ func (r *AccountRepository) UpdateStatus(ctx context.Context, id string, status 
 // UpdateToken updates the access token and expiry time for an account.
 func (r *AccountRepository) UpdateToken(ctx context.Context, id string, accessToken string, expiry time.Time) error {
 	nowStr := time.Now().UTC().Format(time.RFC3339)
-	expiryStr := expiry.Format(time.RFC3339)
+	expiryStr := expiry.UTC().Format(time.RFC3339)
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE accounts
 		SET access_token = ?, token_expiry = ?, updated_at = ?
