@@ -143,9 +143,16 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	return copyAndClose(out, in)
+}
 
-	_, err = io.Copy(out, in)
+// copyAndClose copies r into w and closes w. A failed Close is returned when
+// the copy itself succeeded, since buffered data may only fail to flush then.
+func copyAndClose(w io.WriteCloser, r io.Reader) error {
+	_, err := io.Copy(w, r)
+	if closeErr := w.Close(); err == nil {
+		err = closeErr
+	}
 	return err
 }
 
