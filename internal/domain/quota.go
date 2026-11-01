@@ -42,6 +42,10 @@ type QuotaRepository interface {
 	// UpsertBuckets inserts or updates multiple quota buckets atomically.
 	UpsertBuckets(ctx context.Context, buckets []*QuotaBucket) error
 
+	// ReplaceBuckets atomically swaps the stored quota buckets of an account
+	// for the given set. If it fails, the previously stored buckets are kept.
+	ReplaceBuckets(ctx context.Context, accountID string, buckets []*QuotaBucket) error
+
 	// GetByAccountID retrieves all quota buckets associated with an account.
 	GetByAccountID(ctx context.Context, accountID string) ([]*QuotaBucket, error)
 

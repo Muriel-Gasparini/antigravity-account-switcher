@@ -122,6 +122,67 @@ func TestQuotaRepository_UpsertAndQuery(t *testing.T) {
 	}
 }
 
+func TestQuotaRepository_ReplaceBuckets(t *testing.T) {
+	_, accRepo, quotaRepo, _, _ := setupTestStore(t)
+	ctx := context.Background()
+	resetTime := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+
+	_ = accRepo.Create(ctx, &domain.Account{ID: "acc-1", Email: "u1@example.com", RefreshToken: "rt1"})
+	_ = accRepo.Create(ctx, &domain.Account{ID: "acc-2", Email: "u2@example.com", RefreshToken: "rt2"})
+
+	bucket := func(account, id string, fraction float64) *domain.QuotaBucket {
+		return &domain.QuotaBucket{AccountID: account, BucketID: id, Window: domain.QuotaWindowDaily, RemainingFraction: fraction, ResetTime: resetTime}
+	}
+
+	if err := quotaRepo.UpsertBuckets(ctx, []*domain.QuotaBucket{bucket("acc-1", "b1", 0.1), bucket("acc-1", "b2", 0.2), bucket("acc-2", "other", 0.9)}); err != nil {
+		t.Fatalf("seed UpsertBuckets failed: %v", err)
+	}
+
+	// Replacing swaps the whole set for the account and leaves other accounts alone.
+	if err := quotaRepo.ReplaceBuckets(ctx, "acc-1", []*domain.QuotaBucket{bucket("acc-1", "b3", 0.3)}); err != nil {
+		t.Fatalf("ReplaceBuckets failed: %v", err)
+	}
+	got, err := quotaRepo.GetByAccountID(ctx, "acc-1")
+	if err != nil {
+		t.Fatalf("GetByAccountID failed: %v", err)
+	}
+	if len(got) != 1 || got[0].BucketID != "b3" {
+		t.Errorf("expected only b3 after replace, got %+v", got)
+	}
+	if other, _ := quotaRepo.GetByAccountID(ctx, "acc-2"); len(other) != 1 {
+		t.Errorf("expected acc-2 buckets to be untouched, got %d", len(other))
+	}
+}
+
+func TestQuotaRepository_ReplaceBuckets_FailureKeepsExistingBuckets(t *testing.T) {
+	_, accRepo, quotaRepo, _, _ := setupTestStore(t)
+	ctx := context.Background()
+	resetTime := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+
+	_ = accRepo.Create(ctx, &domain.Account{ID: "acc-1", Email: "u1@example.com", RefreshToken: "rt1", Status: domain.AccountStatusExhausted})
+	if err := quotaRepo.UpsertBuckets(ctx, []*domain.QuotaBucket{
+		{AccountID: "acc-1", BucketID: "b1", Window: domain.QuotaWindowDaily, ResetTime: resetTime},
+	}); err != nil {
+		t.Fatalf("seed UpsertBuckets failed: %v", err)
+	}
+
+	// A bucket for an account that does not exist violates the foreign key.
+	err := quotaRepo.ReplaceBuckets(ctx, "acc-1", []*domain.QuotaBucket{
+		{AccountID: "acc-missing", BucketID: "b2", Window: domain.QuotaWindowDaily, ResetTime: resetTime},
+	})
+	if err == nil {
+		t.Fatal("expected ReplaceBuckets to fail on a foreign key violation")
+	}
+
+	got, err := quotaRepo.GetByAccountID(ctx, "acc-1")
+	if err != nil {
+		t.Fatalf("GetByAccountID failed: %v", err)
+	}
+	if len(got) != 1 || got[0].BucketID != "b1" {
+		t.Fatalf("expected b1 to survive a failed replace, got %+v", got)
+	}
+}
+
 func TestQuotaRepository_GetExhaustedAccountsPastReset(t *testing.T) {
 	_, accRepo, quotaRepo, _, _ := setupTestStore(t)
 	ctx := context.Background()

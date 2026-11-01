@@ -130,6 +130,12 @@ func NewPoller(
 		opt(&cfg)
 	}
 
+	// time.NewTicker panics on non-positive durations, so a zero or negative
+	// interval (e.g. quota_interval "0s") must never reach the polling loop.
+	if cfg.PollInterval <= 0 {
+		cfg.PollInterval = DefaultPollInterval
+	}
+
 	client := cfg.HTTPClient
 	if client == nil {
 		client = &http.Client{
@@ -336,11 +342,10 @@ func (p *Poller) pollAccount(ctx context.Context, acc *domain.Account, now time.
 		buckets = b
 	}
 
-	// 3. Upsert buckets to SQLite
+	// 3. Replace the account's stored buckets with the fresh set
 	if len(buckets) > 0 {
-		_ = p.quotaRepo.DeleteByAccountID(ctx, acc.ID)
-		if err := p.quotaRepo.UpsertBuckets(ctx, buckets); err != nil {
-			return fmt.Errorf("failed to upsert quota buckets: %w", err)
+		if err := p.quotaRepo.ReplaceBuckets(ctx, acc.ID, buckets); err != nil {
+			return fmt.Errorf("failed to replace quota buckets: %w", err)
 		}
 	}
 

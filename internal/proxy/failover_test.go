@@ -247,6 +247,13 @@ func (m *mockQuotaRepo) ListAll(ctx context.Context) (map[string][]*domain.Quota
 	return res, nil
 }
 
+func (m *mockQuotaRepo) ReplaceBuckets(ctx context.Context, accountID string, buckets []*domain.QuotaBucket) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.buckets[accountID] = append([]*domain.QuotaBucket(nil), buckets...)
+	return nil
+}
+
 func (m *mockQuotaRepo) DeleteByAccountID(ctx context.Context, accountID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

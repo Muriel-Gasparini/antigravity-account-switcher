@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -30,6 +31,15 @@ func (r *QuotaRepository) UpsertBuckets(ctx context.Context, buckets []*domain.Q
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := upsertBucketsTx(ctx, tx, buckets); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// upsertBucketsTx upserts the buckets inside an existing transaction. The
+// caller owns commit and rollback.
+func upsertBucketsTx(ctx context.Context, tx *sql.Tx, buckets []*domain.QuotaBucket) error {
 	query := `
 		INSERT INTO quota_buckets (
 			account_id, bucket_id, display_name, window,
@@ -71,6 +81,24 @@ func (r *QuotaRepository) UpsertBuckets(ctx context.Context, buckets []*domain.Q
 		}
 	}
 
+	return nil
+}
+
+// ReplaceBuckets deletes the account's buckets and stores the given ones in a
+// single transaction, so a failed write keeps the previously stored buckets.
+func (r *QuotaRepository) ReplaceBuckets(ctx context.Context, accountID string, buckets []*domain.QuotaBucket) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM quota_buckets WHERE account_id = ?", accountID); err != nil {
+		return fmt.Errorf("failed to delete quota buckets: %w", err)
+	}
+	if err := upsertBucketsTx(ctx, tx, buckets); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
