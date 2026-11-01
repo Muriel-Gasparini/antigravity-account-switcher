@@ -2,7 +2,9 @@ package sqlite_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/store/sqlite"
@@ -88,5 +90,64 @@ func TestOpenDB_Adapter(t *testing.T) {
 
 	if err := rawDB.Ping(); err != nil {
 		t.Fatalf("ping failed: %v", err)
+	}
+}
+
+func TestOpen_CreatesPrivateDirAndFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+
+	dir := filepath.Join(t.TempDir(), "sub")
+	dbPath := filepath.Join(dir, "a.db")
+	db, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open failed: %v", err)
+	}
+	defer db.Close()
+
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat db directory: %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Errorf("expected db directory perm 0700, got %o", got)
+	}
+
+	fileInfo, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat db file: %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("expected db file perm 0600, got %o", got)
+	}
+}
+
+func TestOpen_TightensExistingFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "b.db")
+	if err := os.WriteFile(dbPath, nil, 0o644); err != nil {
+		t.Fatalf("write pre-existing db file: %v", err)
+	}
+	// WriteFile is subject to the umask, so set the mode explicitly.
+	if err := os.Chmod(dbPath, 0o644); err != nil {
+		t.Fatalf("chmod pre-existing db file: %v", err)
+	}
+
+	db, err := sqlite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("sqlite.Open failed: %v", err)
+	}
+	defer db.Close()
+
+	fileInfo, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat db file: %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Errorf("expected pre-existing db file tightened to 0600, got %o", got)
 	}
 }
