@@ -156,6 +156,12 @@ func NewServer(
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 
+	// 0. Browser CSRF guard for state-changing dashboard/OAuth requests.
+	if isManagementPath(path) && !isSafeMethod(r.Method) && !s.requestFromTrustedOrigin(r) {
+		writeForbiddenOrigin(w)
+		return
+	}
+
 	// 1. API Endpoints
 	if path == "/api/status" {
 		s.api.HandleStatus(w, r)

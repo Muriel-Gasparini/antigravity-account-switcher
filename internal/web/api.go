@@ -395,7 +395,14 @@ func (a *APIHandler) HandleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 		summary, err := a.metricsService.GetSummary(ctx, accountID, norm)
 		if err != nil {
-			writeErrorJSON(w, http.StatusInternalServerError, "failed to get account summary", err)
+			switch {
+			case errors.Is(err, domain.ErrInvalidPeriod):
+				writeErrorJSON(w, http.StatusBadRequest, "invalid period; valid values: day, week, month, lifetime", err)
+			case errors.Is(err, domain.ErrAccountNotFound):
+				writeErrorJSON(w, http.StatusNotFound, "account not found", err)
+			default:
+				writeErrorJSON(w, http.StatusInternalServerError, "failed to get account summary", err)
+			}
 			return
 		}
 		writeJSON(w, http.StatusOK, summary)
@@ -490,8 +497,14 @@ func (a *APIHandler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleOAuthStart serves POST/GET /oauth/start.
+// HandleOAuthStart serves POST /oauth/start. Each call opens a new loopback
+// flow, so it is not available through GET or any other method.
 func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		writeErrorJSON(w, http.StatusMethodNotAllowed, "method not allowed", nil)
+		return
+	}
 	if a.oauthEngine == nil {
 		writeErrorJSON(w, http.StatusNotImplemented, "OAuth2 engine not configured", nil)
 		return
