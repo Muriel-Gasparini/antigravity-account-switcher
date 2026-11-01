@@ -199,3 +199,58 @@ func TestQuotaRepository_GetExhaustedAccountsPastReset(t *testing.T) {
 		t.Errorf("expected acc-reset-1, got %s", resetAccounts[0])
 	}
 }
+
+// A reset time carrying a non-UTC offset must be stored in UTC, otherwise the
+// text comparison in GetExhaustedAccountsPastReset sorts it against the wrong
+// wall-clock value.
+func TestQuotaRepository_GetExhaustedAccountsPastReset_NonUTCResetTime(t *testing.T) {
+	ist := time.FixedZone("IST", 5*3600+1800)
+	westOfUTC := time.FixedZone("PST", -8*3600)
+	now := time.Now().UTC()
+
+	tests := []struct {
+		name      string
+		resetTime time.Time
+		want      bool
+	}{
+		{"east of UTC, reset 1h ago", now.Add(-1 * time.Hour).In(ist), true},
+		{"east of UTC, reset 1h ahead", now.Add(1 * time.Hour).In(ist), false},
+		{"west of UTC, reset 1h ago", now.Add(-1 * time.Hour).In(westOfUTC), true},
+		{"west of UTC, reset 1h ahead", now.Add(1 * time.Hour).In(westOfUTC), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, accRepo, quotaRepo, _, _ := setupTestStore(t)
+			ctx := context.Background()
+
+			_ = accRepo.Create(ctx, &domain.Account{ID: "acc-tz", Email: "tz@example.com", RefreshToken: "rt", Status: domain.AccountStatusExhausted})
+			err := quotaRepo.UpsertBuckets(ctx, []*domain.QuotaBucket{{
+				AccountID: "acc-tz",
+				BucketID:  "daily",
+				Window:    domain.QuotaWindowDaily,
+				ResetTime: tt.resetTime,
+				UpdatedAt: now.In(ist),
+			}})
+			if err != nil {
+				t.Fatalf("UpsertBuckets failed: %v", err)
+			}
+
+			got, err := quotaRepo.GetExhaustedAccountsPastReset(ctx, now)
+			if err != nil {
+				t.Fatalf("GetExhaustedAccountsPastReset failed: %v", err)
+			}
+			if returned := len(got) == 1 && got[0] == "acc-tz"; returned != tt.want {
+				t.Errorf("returned=%v, want %v (got %v)", returned, tt.want, got)
+			}
+
+			buckets, err := quotaRepo.GetByAccountID(ctx, "acc-tz")
+			if err != nil || len(buckets) != 1 {
+				t.Fatalf("GetByAccountID: %v, %d buckets", err, len(buckets))
+			}
+			if !buckets[0].ResetTime.Equal(tt.resetTime.Truncate(time.Second)) {
+				t.Errorf("reset time changed on round trip: got %v, want %v", buckets[0].ResetTime, tt.resetTime)
+			}
+		})
+	}
+}

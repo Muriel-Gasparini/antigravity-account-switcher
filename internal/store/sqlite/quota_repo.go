@@ -49,6 +49,8 @@ func (r *QuotaRepository) UpsertBuckets(ctx context.Context, buckets []*domain.Q
 	}
 	defer stmt.Close()
 
+	// Timestamps are stored as RFC3339 text and compared lexically in SQL, so
+	// they must all be normalised to UTC on write.
 	now := time.Now().UTC()
 	for _, b := range buckets {
 		updatedAt := b.UpdatedAt
@@ -63,8 +65,8 @@ func (r *QuotaRepository) UpsertBuckets(ctx context.Context, buckets []*domain.Q
 			string(b.Window),
 			b.RemainingFraction,
 			b.RemainingAmount,
-			b.ResetTime.Format(time.RFC3339),
-			updatedAt.Format(time.RFC3339),
+			b.ResetTime.UTC().Format(time.RFC3339),
+			updatedAt.UTC().Format(time.RFC3339),
 		)
 		if err != nil {
 			return fmt.Errorf("failed to upsert bucket %s/%s: %w", b.AccountID, b.BucketID, err)

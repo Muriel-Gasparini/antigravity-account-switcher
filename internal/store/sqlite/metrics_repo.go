@@ -43,7 +43,7 @@ func (r *MetricsRepository) Record(ctx context.Context, m *domain.TokenMetric) e
 		m.TotalTokens,
 		m.CachedContentTokens,
 		m.ThoughtsTokens,
-		m.Timestamp.Format(time.RFC3339),
+		m.Timestamp.UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to record token metric: %w", err)

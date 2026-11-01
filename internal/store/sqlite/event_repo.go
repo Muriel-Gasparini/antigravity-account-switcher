@@ -42,7 +42,7 @@ func (r *EventRepository) Record(ctx context.Context, event *domain.ProxyEvent) 
 		event.AccountID,
 		event.Message,
 		detailsStr,
-		event.Timestamp.Format(time.RFC3339),
+		event.Timestamp.UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to record proxy event: %w", err)
