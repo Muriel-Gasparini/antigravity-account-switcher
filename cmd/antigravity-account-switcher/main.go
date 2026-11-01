@@ -194,13 +194,7 @@ func runServe(args []string) {
 		fmt.Printf("Auto-imported existing Antigravity account: %s\n", importedAcc.Email)
 	}
 
-	tokenRefresher := quota.TokenRefresherFunc(func(ctx context.Context, rt string) (string, time.Time, error) {
-		resp, err := oauthService.RefreshToken(ctx, rt)
-		if err != nil {
-			return "", time.Time{}, err
-		}
-		return resp.AccessToken, time.Now().UTC().Add(time.Duration(resp.ExpiresIn) * time.Second), nil
-	})
+	tokenRefresher := quota.TokenRefresherFunc(oauthService.RefreshAccessToken)
 
 	proxyHandler, err := proxy.NewProxyHandler(
 		accRepo,

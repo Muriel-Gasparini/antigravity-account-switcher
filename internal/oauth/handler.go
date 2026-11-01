@@ -494,6 +494,7 @@ type OAuthService struct {
 	accountRepo domain.AccountRepository
 	stateStore  *StateStore
 	client      *http.Client
+	refreshes   refreshGroup
 }
 
 // NewOAuthService constructs a new OAuthService.
@@ -859,11 +860,19 @@ func (s *OAuthService) UpsertAccount(ctx context.Context, email, accessToken, re
 }
 
 // RefreshToken exchanges a refresh token for fresh access credentials with Google.
+// Concurrent calls with the same refresh token share a single upstream request, so
+// parallel proxy requests and quota polls for one account do not refresh it
+// repeatedly (which could invalidate each other when refresh tokens rotate).
 func (s *OAuthService) RefreshToken(ctx context.Context, refreshToken string) (*TokenResponse, error) {
 	if refreshToken == "" {
 		return nil, errors.New("empty refresh token")
 	}
+	return s.refreshes.do(ctx, refreshToken, func(ctx context.Context) (*TokenResponse, error) {
+		return s.exchangeRefreshToken(ctx, refreshToken)
+	})
+}
 
+func (s *OAuthService) exchangeRefreshToken(ctx context.Context, refreshToken string) (*TokenResponse, error) {
 	if s.cfg.ClientID == "" || s.cfg.ClientSecret == "" {
 		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
 	}
@@ -914,6 +923,35 @@ func (s *OAuthService) RefreshToken(ctx context.Context, refreshToken string) (*
 	}
 
 	return &tokenResp, nil
+}
+
+// RefreshAccessToken refreshes the access token for the given refresh token and
+// returns it with its absolute expiry. If the server rotates the refresh token,
+// the new one is stored on the account that held the old one.
+func (s *OAuthService) RefreshAccessToken(ctx context.Context, refreshToken string) (string, time.Time, error) {
+	resp, err := s.RefreshToken(ctx, refreshToken)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if resp.RefreshToken != "" && resp.RefreshToken != refreshToken {
+		s.storeRotatedRefreshToken(ctx, refreshToken, resp.RefreshToken)
+	}
+	return resp.AccessToken, time.Now().UTC().Add(time.Duration(resp.ExpiresIn) * time.Second), nil
+}
+
+// storeRotatedRefreshToken replaces oldToken with newToken on every account
+// that still holds oldToken. It is best effort: a failed write must not throw
+// away the access token that was just obtained.
+func (s *OAuthService) storeRotatedRefreshToken(ctx context.Context, oldToken, newToken string) {
+	accounts, err := s.accountRepo.List(ctx)
+	if err != nil {
+		return
+	}
+	for _, acc := range accounts {
+		if acc.RefreshToken == oldToken {
+			_ = s.accountRepo.UpdateRefreshToken(ctx, acc.ID, newToken)
+		}
+	}
 }
 
 // EnsureValidToken checks if an account's token is valid. If expiring, refreshes it and updates SQLite.

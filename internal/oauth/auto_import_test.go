@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/store/sqlite"
@@ -80,5 +81,49 @@ func TestAutoImportExistingAccount(t *testing.T) {
 	acc2, err := AutoImportExistingAccount(context.Background(), repo, oauthService)
 	if err != nil || acc2 != nil {
 		t.Errorf("expected second run to be no-op, got %v, err %v", acc2, err)
+	}
+}
+
+func TestAutoImportExistingAccount_InvalidTokenFileErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"empty refresh token", `{"client_id":"test-client","refresh_token":""}`},
+		{"missing refresh token", `{"client_id":"test-client"}`},
+		{"malformed json", `{"refresh_token":`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpHome := t.TempDir()
+			t.Setenv("HOME", tmpHome)
+
+			acpDir := filepath.Join(tmpHome, ".gemini", "antigravity-acp")
+			if err := os.MkdirAll(acpDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(acpDir, "acp_token.json"), []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			db, err := sqlite.Open(filepath.Join(tmpHome, "test.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+
+			repo := sqlite.NewAccountRepository(db)
+			acc, err := AutoImportExistingAccount(context.Background(), repo, NewOAuthService(repo))
+			if err == nil {
+				t.Fatalf("expected an error for %s, got account %v", tc.name, acc)
+			}
+			if strings.Contains(err.Error(), "%!") {
+				t.Errorf("error text contains a formatting artifact: %q", err.Error())
+			}
+			if !strings.Contains(err.Error(), "invalid token file") {
+				t.Errorf("error %q should say the token file is invalid", err.Error())
+			}
+		})
 	}
 }
